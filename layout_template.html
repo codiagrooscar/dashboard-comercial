@@ -1,0 +1,2106 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controller Comercial</title>
+  <!-- Google Fonts desactivado localmente para optimizar carga instantánea -->
+  <!-- <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"> -->
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --ink: #f1f5f9;
+      --muted: #94a3b8;
+      --line: #334155;
+      --accent: #10b981;
+      --accent-gradient: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      --accent-2: #f59e0b;
+      --accent-2-gradient: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      --warn: #f59e0b;
+      --warn-gradient: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      --danger: #ef4444;
+      --shadow: rgba(0, 0, 0, 0.4);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      background-image: radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.02) 0%, transparent 40%),
+                        radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.02) 0%, transparent 40%);
+      background-attachment: fixed;
+    }
+    a {
+      text-decoration: none;
+    }
+    
+    /* Layout Container */
+    .app-container {
+      display: flex;
+      min-height: 100vh;
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      box-shadow: 0 0 40px rgba(59, 130, 246, 0.2);
+    }
+    
+    /* Sidebar styling */
+    .sidebar {
+      width: 280px;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 32px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 100;
+      overflow-y: auto;
+    }
+    
+    .brand h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #10b981, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    
+    .sidebar-date-selector {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 0;
+    }
+    
+    /* Nav Menu styling */
+    .nav-menu {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+    .order-chk {
+      width: 16px;
+      height: 16px;
+      accent-color: #255837;
+      cursor: pointer;
+      margin: 0 auto;
+      display: block;
+    }
+    
+    .nav-item {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      padding: 12px 16px;
+      border-radius: 8px;
+      text-align: left;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: all 0.2s ease;
+      width: 100%;
+    }
+    
+    .nav-item:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    
+    .nav-item.active {
+      color: var(--ink);
+      background: var(--accent-gradient);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+    }
+    
+    .nav-icon {
+      font-size: 16px;
+      display: inline-block;
+      width: 20px;
+      text-align: center;
+    }
+    
+    .sidebar-footer {
+      margin-top: auto;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+    
+    .sidebar-footer p {
+      margin: 0;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    
+    /* Main Content Area */
+    .main-content {
+      margin-left: 280px;
+      flex: 1;
+      padding: 40px clamp(16px, 4vw, 48px);
+      min-width: 0;
+    }
+    
+    /* Tab visibility */
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Responsive styling */
+    @media (max-width: 992px) {
+      .app-container {
+      display: flex;
+      min-height: 100vh;
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      box-shadow: 0 0 40px rgba(59, 130, 246, 0.2);
+    }
+      .sidebar {
+        width: 100%;
+        position: static;
+        padding: 24px 20px;
+        gap: 20px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .main-content {
+        margin-left: 0;
+        padding: 24px 16px;
+      }
+      .nav-menu {
+        flex-direction: row;
+        overflow-x: auto;
+        padding-bottom: 8px;
+        gap: 8px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .nav-item {
+        flex-shrink: 0;
+        width: auto;
+        white-space: nowrap;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .sidebar-date-selector {
+        border: 0;
+        padding: 0;
+      }
+      .sidebar-footer {
+        display: none;
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 30px -10px var(--shadow);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel:hover {
+      border-color: rgba(255, 255, 255, 0.1);
+      box-shadow: 0 15px 35px -10px rgba(0,0,0,0.5);
+    }
+    .panel h2 {
+      margin: 0 0 20px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--ink);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-left: 3px solid #10b981;
+      padding-left: 10px;
+    }
+    .inline-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+      justify-content: space-between;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .form-group label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input[type=date] {
+      background: #182235;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      width: 100%;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input[type=date]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+      outline: none;
+    }
+    .upload-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 820px) {
+      .upload-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .upload-label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    input[type=file] {
+      width: 100%;
+      border: 1px dashed rgba(255, 255, 255, 0.15);
+      padding: 14px;
+      border-radius: 8px;
+      background: #182235;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    input[type=file]:hover {
+      border-color: var(--accent-2);
+      background: #1c293f;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 22px;
+      font-weight: 700;
+      cursor: pointer;
+      color: var(--ink);
+      background: var(--accent-gradient);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
+      transition: transform 0.1s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+      font-size: 14px;
+    }
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    button.secondary {
+      background: var(--accent-2-gradient);
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+    }
+    button.secondary:hover {
+      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+    }
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 14px;
+      margin: 16px 0;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: middle;
+    }
+    th {
+      background: #182536;
+      color: var(--ink);
+      font-weight: 600;
+      border-bottom: 2px solid var(--line);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    td {
+      border-bottom: 1px solid var(--line);
+      background: #141c2c;
+      color: var(--ink);
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    tr:hover td {
+      background: #1a2438;
+    }
+    .bar-chart {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin: 16px 0 24px;
+    }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .bar-row.compact {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .bar-label {
+      width: 160px;
+      flex-shrink: 0;
+      color: var(--ink);
+      font-weight: 600;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .bar-row.compact .bar-label {
+      width: 220px;
+    }
+    .bar-value {
+      width: 140px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      font-size: 13px;
+      font-weight: 600;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .bar-track {
+      flex: 1;
+      height: 12px;
+      background: #182235;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.02);
+    }
+    .bar-fill {
+      height: 100%;
+      background: var(--accent-gradient);
+      border-radius: 6px;
+      min-width: 2px;
+      transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .bar-fill.alt {
+      background: var(--accent-2-gradient);
+    }
+    .trend-chart {
+      height: 220px;
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(32px, 1fr);
+      gap: 12px;
+      align-items: end;
+      padding: 16px 8px 8px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+      overflow-x: auto;
+      background: rgba(0,0,0,0.15);
+      border-radius: 8px 8px 0 0;
+    }
+    .trend-day {
+      display: grid;
+      grid-template-rows: 1fr 22px;
+      height: 100%;
+      min-width: 32px;
+    }
+    .trend-bars {
+      display: flex;
+      align-items: end;
+      justify-content: center;
+      gap: 4px;
+      height: 100%;
+    }
+    .trend-bar {
+      width: 10px;
+      border-radius: 4px 4px 0 0;
+      display: inline-block;
+      min-height: 2px;
+      transition: height 0.5s ease;
+    }
+    .trend-bar.pedidos, .dot.pedidos {
+      background: var(--accent);
+    }
+    .trend-bar.facturas, .dot.facturas {
+      background: var(--accent-2);
+    }
+    .trend-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+      white-space: nowrap;
+      margin-top: 6px;
+    }
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      margin: 12px 0 24px;
+      justify-content: center;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      display: inline-block;
+      border-radius: 50%;
+    }
+    .budget-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin: 16px 0 24px;
+    }
+    @media (max-width: 820px) {
+      .budget-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .budget-row {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+      background: rgba(24, 34, 53, 0.4);
+    }
+    .budget-head, .budget-foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+    }
+    .budget-head strong {
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .budget-head span {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .budget-foot {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .budget-track {
+      height: 10px;
+      background: #182235;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 12px;
+      border: 1px solid rgba(255,255,255,0.01);
+    }
+    .budget-fill {
+      height: 100%;
+      background: var(--warn-gradient);
+      border-radius: 5px;
+      width: 0;
+      transition: width 0.8s ease;
+    }
+    .budget-fill.over {
+      background: var(--accent-gradient);
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+      line-height: 1.6;
+    }
+    li {
+      margin: 8px 0;
+    }
+    .error {
+      border-color: rgba(239, 68, 68, 0.4);
+      background: rgba(239, 68, 68, 0.05);
+    }
+    .error h2 {
+      border-left-color: var(--danger);
+      color: #fca5a5;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge.pedido {
+      background-color: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    .badge.oferta {
+      background-color: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+    .text-right {
+      text-align: right;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      border: 2px dashed var(--line);
+      background: rgba(20, 28, 44, 0.3);
+    }
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    .empty-state p {
+      color: var(--muted);
+      max-width: 500px;
+      margin: 8px auto 0;
+      line-height: 1.5;
+    }
+    h3 {
+      font-size: 15px;
+      color: var(--ink);
+      margin: 24px 0 12px;
+      font-weight: 600;
+    }
+    .text-center {
+      text-align: center;
+    }
+    
+    /* Alerts Styling (Screen / Dark Theme) */
+    .alerts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .alert-column {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .alert-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 16px 0 10px 4px;
+      border-left: 2px solid var(--accent-2);
+      padding-left: 8px;
+    }
+    .alerts-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .alert-card {
+      background: rgba(24, 34, 53, 0.4);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .alert-card:hover {
+      border-color: rgba(255, 255, 255, 0.1);
+      transform: translateY(-1px);
+    }
+    .alert-card.alert-danger {
+      border-left: 4px solid var(--danger);
+    }
+    .alert-card.alert-warn {
+      border-left: 4px solid var(--warn);
+    }
+    .alert-card.alert-info {
+      border-left: 4px solid #60a5fa;
+    }
+    .alert-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .alert-badge {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+    .alert-badge.badge-danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .alert-badge.badge-warn {
+      background: rgba(239, 155, 0, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(239, 155, 0, 0.3);
+    }
+    .alert-badge.badge-info {
+      background: rgba(96, 165, 250, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(96, 165, 250, 0.3);
+    }
+    .alert-doc {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .alert-body {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .alert-desc {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+    }
+    .alert-info-val {
+      font-size: 13px;
+      color: var(--ink);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .pdf-page-break {
+      display: none;
+    }
+    .pdf-only-header {
+      display: none !important;
+    }
+     body.pdf-generating {
+       width: 780px !important;
+       min-width: 780px !important;
+       margin: 0 !important;
+       padding: 0 !important;
+       overflow: visible !important;
+       background: #ffffff !important;
+     }
+     body.pdf-generating .app-container {
+      display: flex;
+      min-height: 100vh;
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      box-shadow: 0 0 40px rgba(59, 130, 246, 0.2);
+    }
+     body.pdf-generating .sidebar {
+       display: none !important;
+     }
+     body.pdf-generating .main-content {
+       margin-left: 0 !important;
+       padding: 0 !important;
+       width: 780px !important;
+       min-width: 780px !important;
+       max-width: 780px !important;
+       overflow: visible !important;
+       background: #ffffff !important;
+     }      /* --- PDF Mode Light Theme overrides --- */
+      .pdf-mode {
+        padding: 0 44px !important; /* Zero padding */
+        --bg: #0f172a !important;
+        --panel: #1e293b !important;
+        --ink: #f8fafc !important;
+        --muted: #94a3b8 !important;
+        --line: #334155 !important;
+        --accent: #10b981 !important;
+        --accent-gradient: #10b981 !important;
+        --accent-2: #f59e0b !important;
+        --accent-2-gradient: #f59e0b !important;
+        --shadow: transparent !important;
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        padding: 0 !important; /* Zero padding to avoid left/right margin offsets */
+        width: 780px !important;
+        box-sizing: border-box !important;
+        box-shadow: none !important;
+      }
+      .pdf-mode .panel {
+        display: block !important; /* Pure block layout, no flex box */
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+        color: #f8fafc !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        padding: 16px !important;
+        margin-bottom: 12px !important;
+        border-radius: 8px !important;
+        box-sizing: border-box !important;
+      }
+      .pdf-mode .tab-content {
+        display: block !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+      .pdf-mode #importar-datos,
+      .pdf-mode .header-actions,
+      .pdf-mode .actions {
+        display: none !important;
+      }
+      /* Page 1 Header alignment using float */
+      .pdf-mode .pdf-header {
+        display: block !important;
+        overflow: hidden !important;
+        width: 100% !important;
+        margin-bottom: 12px !important;
+      }
+      .pdf-mode .pdf-header > div:first-child {
+        float: left !important;
+      }
+      .pdf-mode .pdf-header > div:last-child {
+        float: right !important;
+        text-align: right !important;
+        padding-right: 35px !important;
+      }
+      .pdf-mode .panel h2 {
+        color: #255837 !important;
+        border-left: 4px solid #255837 !important;
+        padding-left: 10px !important;
+        font-size: 15px !important;
+        font-weight: 700 !important;
+        margin-top: 0 !important;
+        margin-bottom: 16px !important;
+        text-transform: none !important;
+        letter-spacing: normal !important;
+      }
+      .pdf-mode .pdf-title {
+        color: #255837 !important;
+        font-weight: 800 !important;
+      }
+      /* KPI row using float */
+      .pdf-mode .pdf-kpis {
+        display: block !important;
+        width: 100% !important;
+        overflow: hidden !important;
+        margin-bottom: 16px !important;
+      }
+      .pdf-mode .pdf-kpis .panel {
+        float: left !important;
+        width: 32% !important;
+        margin-right: 2% !important;
+        margin-bottom: 0 !important;
+        padding: 16px 12px !important;
+        text-align: center !important;
+        display: block !important;
+        box-sizing: border-box !important;
+        border: 1px solid #334155 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+        background: #1e293b !important;
+      }
+      .pdf-mode .pdf-kpis .panel:last-child {
+        margin-right: 0 !important;
+      }
+      .pdf-mode .pdf-kpis .panel span {
+        font-size: 24px !important;
+        margin-bottom: 4px !important;
+        display: block !important;
+      }
+      .pdf-mode .pdf-kpis .panel strong {
+        font-size: 18px !important;
+        margin-top: 4px !important;
+        color: #f8fafc !important;
+        display: block !important;
+      }
+      .pdf-mode .pdf-kpis .panel span[style*="font-size: 11px"], 
+      .pdf-mode .pdf-kpis .panel span[style*="font-size: 12px"] {
+        font-size: 10px !important;
+        color: #94a3b8 !important;
+        text-transform: uppercase !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+      }
+      /* Grid-2 using float */
+      .pdf-mode .pdf-grid-2 {
+        display: block !important;
+        width: 100% !important;
+        overflow: hidden !important;
+        margin-bottom: 16px !important;
+      }
+      .pdf-mode .pdf-grid-2 > .panel:nth-child(1) {
+        width: 49% !important;
+        float: left !important;
+        margin-right: 2% !important;
+        margin-bottom: 0 !important;
+        box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .pdf-mode .pdf-grid-2 > .panel:nth-child(2) {
+        width: 49% !important;
+        float: right !important;
+        margin-right: 0 !important;
+        margin-bottom: 0 !important;
+        box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      /* Composition bar chart layout using float */
+      .pdf-mode .bar-row.compact {
+        display: block !important;
+        overflow: hidden !important;
+        width: 100% !important;
+        margin-bottom: 8px !important;
+        clear: both !important;
+        gap: 0 !important;
+      }
+      .pdf-mode .bar-row.compact .bar-label {
+        float: left !important;
+        width: 150px !important;
+        min-width: 150px !important;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        line-height: 1.3 !important;
+        color: #f8fafc !important;
+        margin-right: 10px !important;
+      }
+      .pdf-mode .bar-track {
+        float: left !important;
+        height: 8px !important;
+        border-radius: 4px !important;
+        background: #e2e8f0 !important;
+        border: 1px solid #cbd5e1 !important;
+        width: calc(100% - 280px) !important;
+        box-sizing: border-box !important;
+        margin-top: 4px !important;
+      }
+      .pdf-mode .bar-fill {
+        background: #255837 !important;
+      }
+      .pdf-mode .bar-fill.alt {
+        background: #ef9b00 !important;
+      }
+      .pdf-mode .bar-value {
+        float: right !important;
+        width: 110px !important;
+        min-width: 110px !important;
+        font-size: 12px !important;
+        text-align: right !important;
+        white-space: nowrap !important;
+        color: #f8fafc !important;
+        box-sizing: border-box !important;
+      }
+      .pdf-mode table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin-bottom: 12px !important;
+        font-size: 12px !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        border: 1px solid #334155 !important;
+      }
+      .pdf-mode th {
+        background: #1e293b !important;
+        color: #f8fafc !important;
+        border-bottom: 2px solid #f59e0b !important;
+        padding: 8px 10px !important;
+        font-weight: 700 !important;
+        font-size: 11px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        text-align: left !important;
+      }
+      .pdf-mode td {
+        background: transparent !important;
+        color: #f8fafc !important;
+        border-bottom: 1px solid #334155 !important;
+        padding: 8px 10px !important;
+      }
+      .pdf-mode tr:nth-child(even) td {
+        background: rgba(255,255,255,0.02) !important;
+      }
+      /* Budget Row layouts using float */
+      .pdf-mode .budget-row {
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        padding: 10px !important;
+        margin-bottom: 8px !important;
+        border-radius: 6px !important;
+        display: block !important;
+      }
+      .pdf-mode .budget-head,
+      .pdf-mode .budget-foot {
+         display: block !important;
+         overflow: hidden !important;
+         width: 100% !important;
+      }
+      .pdf-mode .budget-head strong,
+      .pdf-mode .budget-foot span:first-child {
+         float: left !important;
+         color: #f8fafc !important;
+      }
+      .pdf-mode .budget-head span,
+      .pdf-mode .budget-foot span:last-child {
+         float: right !important;
+         text-align: right !important;
+         color: #10b981 !important;
+      }
+      .pdf-mode .budget-head span {
+         font-weight: 700 !important;
+      }
+      .pdf-mode .budget-foot {
+         font-size: 11px !important;
+         margin-top: 6px !important;
+         color: #94a3b8 !important;
+      }
+      .pdf-mode .budget-track {
+         height: 8px !important;
+         border-radius: 4px !important;
+         margin: 6px 0 !important;
+         background: #0f172a !important;
+         border: 1px solid #334155 !important;
+         display: block !important;
+         width: 100% !important;
+         clear: both !important;
+      }
+      .pdf-mode .budget-fill {
+        background: #ef9b00 !important;
+      }
+      .pdf-mode .budget-fill.over {
+        background: #255837 !important;
+      }
+      .pdf-mode h3 {
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        margin-top: 14px !important;
+        margin-bottom: 6px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+      }
+      .pdf-mode ul {
+        list-style: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .pdf-mode li {
+        padding: 6px 10px !important;
+        margin-bottom: 4px !important;
+        font-size: 11px !important;
+        border-radius: 4px !important;
+        list-style-type: none !important;
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        border-left: 4px solid #ef9b00 !important;
+        color: #f8fafc !important;
+      }
+      .pdf-mode .note {
+        font-size: 10px !important;
+        color: #94a3b8 !important;
+      }
+      /* Alerts row layout using float */
+      .pdf-mode .alerts-grid {
+        display: block !important;
+        width: 100% !important;
+        overflow: hidden !important;
+      }
+      .pdf-mode .alert-column {
+        width: 32% !important;
+        float: left !important;
+        margin-right: 2% !important;
+        box-sizing: border-box !important;
+        display: block !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .pdf-mode .alert-column:last-child {
+        margin-right: 0 !important;
+      }
+      .pdf-mode .alert-section-title {
+        font-size: 11px !important;
+        margin: 12px 0 8px 4px !important;
+        padding-left: 6px !important;
+      }
+      .pdf-mode .alerts-container {
+        gap: 8px !important;
+        margin-bottom: 12px !important;
+        display: block !important;
+      }
+      /* Alert card layout using float */
+      .pdf-mode .alert-card {
+        display: block !important;
+        padding: 10px !important;
+        border-radius: 6px !important;
+        margin-bottom: 8px !important;
+        box-shadow: none !important;
+        transform: none !important;
+        background: #1e293b !important;
+        border: 1px solid #334155 !important;
+        box-sizing: border-box !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .pdf-mode .alert-card.alert-danger {
+        border-left: 4px solid #ef4444 !important;
+      }
+      .pdf-mode .alert-badge.badge-danger {
+        background: #fef2f2 !important;
+        color: #ef4444 !important;
+        border: 1px solid #fca5a5 !important;
+      }
+      .pdf-mode .alert-card.alert-warn {
+        border-left: 4px solid #ef9b00 !important;
+      }
+      .pdf-mode .alert-badge.badge-warn {
+        background: #fffbeb !important;
+        color: #d97706 !important;
+        border: 1px solid #fcd34d !important;
+      }
+      .pdf-mode .alert-card.alert-info {
+        border-left: 4px solid #3b82f6 !important;
+      }
+      .pdf-mode .alert-badge.badge-info {
+        background: #eff6ff !important;
+        color: #2563eb !important;
+        border: 1px solid #93c5fd !important;
+      }
+      .pdf-mode .alert-header,
+      .pdf-mode .alert-body {
+        display: block !important;
+        overflow: hidden !important;
+        width: 100% !important;
+      }
+      .pdf-mode .alert-header {
+        margin-bottom: 6px !important;
+      }
+      .pdf-mode .alert-header span:first-child,
+      .pdf-mode .alert-body span:first-child {
+        float: left !important;
+      }
+      .pdf-mode .alert-header span:last-child,
+      .pdf-mode .alert-body span:last-child {
+        float: right !important;
+        text-align: right !important;
+      }
+      .pdf-mode .alert-doc,
+      .pdf-mode .alert-info-val,
+      .pdf-mode .alert-info-val strong {
+        color: #f8fafc !important;
+      }
+      .pdf-mode .alert-desc {
+        color: #94a3b8 !important;
+      }
+      .pdf-mode .pdf-page-break,
+      .html2pdf__page-break {
+        display: block !important;
+        page-break-before: always !important;
+        break-before: page !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        clear: both !important;
+      }
+      /* Page 2 header using float */
+      .pdf-mode .pdf-only-header {
+        display: block !important;
+        overflow: hidden !important;
+        width: 100% !important;
+        margin-top: 10px !important;
+      }
+      .pdf-mode .pdf-only-header span:first-child {
+        float: left !important;
+      }
+      .pdf-mode .pdf-only-header span:last-child {
+        float: right !important;
+        padding-right: 35px !important;
+      }
+    
+    /* Sorting indicators */
+    th.sortable-header {
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    th.sortable-header:hover {
+      background-color: #223249 !important;
+      color: #fff !important;
+    }
+    .sort-indicator {
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 10px;
+      vertical-align: middle;
+      opacity: 0.4;
+      transition: opacity 0.2s ease;
+    }
+    .sort-indicator.active {
+      opacity: 1;
+      color: var(--accent-2, #ef9b00);
+    }
+    th.sortable-header:hover .sort-indicator {
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <aside class="sidebar">
+      <div class="brand" style="display: flex; flex-direction: column; gap: 14px; align-items: flex-start; margin-bottom: 8px;">
+        <div style="background: #ffffff; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.15); width: 100%; max-width: 180px; border: 1px solid rgba(255,255,255,0.1);">
+          <img src="{CODIAGRO_LOGO_B64}" alt="Codiagro" style="height: 38px; width: auto; display: block; object-fit: contain;" />
+        </div>
+        <div>
+          <h1 style="font-size: 18px; margin: 0; color: #ffffff; font-weight: 700; letter-spacing: -0.5px; background: none; -webkit-text-fill-color: initial;">Controller Comercial</h1>
+          <p style="margin: 4px 0 0; color: var(--muted); font-size: 11px;">Informe comercial biosanitarios</p>
+        </div>
+      </div>
+      
+      <section class="sidebar-date-selector">
+        <form method="get" action="/default" id="date-selector-form">
+          <div class="form-group">
+            <label for="report-date-select">Fecha del informe</label>
+            <input type="date" id="report-date-select" name="date" value="{selected_date}" onchange="this.form.submit()">
+          </div>
+        </form>
+      </section>
+
+      <nav class="nav-menu">
+        <button class="nav-item" onclick="switchTab('resumen-ejecutivo')" id="nav-resumen-ejecutivo">
+          <span class="nav-icon">📋</span> Resumen Ejecutivo
+        </button>
+        <button class="nav-item" onclick="switchTab('resumen-diario')" id="nav-resumen-diario">
+          <span class="nav-icon">📊</span> Resumen Diario
+        </button>
+        <button class="nav-item" onclick="switchTab('previsiones-cierre')" id="nav-previsiones-cierre">
+          <span class="nav-icon">📈</span> Previsiones y Cierre
+        </button>
+        <button class="nav-item" onclick="switchTab('calendario-entregas')" id="nav-calendario-entregas">
+          <span class="nav-icon">📅</span> Planificación
+        </button>
+        <button class="nav-item" onclick="switchTab('alertas-auditoria')" id="nav-alertas-auditoria">
+          <span class="nav-icon">⚠️</span> Alertas y Auditoría
+        </button>
+        <button class="nav-item" onclick="switchTab('cartera-comparativas')" id="nav-cartera-comparativas">
+          <span class="nav-icon">💼</span> Comparativas e YTD
+        </button>
+        <button class="nav-item" onclick="switchTab('produccion-dashboard')" id="nav-produccion-dashboard">
+          <span class="nav-icon">🏭</span> Producción
+        </button>
+        <button class="nav-item" onclick="switchTab('importar-datos')" id="nav-importar-datos">
+          <span class="nav-icon">📥</span> Importar Archivos
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <p>Previsión consolidada de ventas.</p>
+        <p style="margin-top: 4px; font-size: 10px; opacity: 0.7;">Base de datos activa</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div id="main-report-container">
+        {report_html}
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal para envío de Email -->
+  <div id="email-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>📧 Enviar Resumen por Email</h2>
+        <button class="close-btn" onclick="closeEmailModal()">&times;</button>
+      </div>
+      <form id="email-form" onsubmit="sendEmail(event)">
+        <div class="form-group" style="margin-bottom: 20px;">
+          <label for="dest-email">Correo del Destinatario:</label>
+          <input type="email" id="dest-email" required placeholder="ejemplo@empresa.com" style="background:#182235; border:1px solid var(--line); color:var(--ink); padding:10px; border-radius:6px; width:100%;">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary" onclick="closeEmailModal()">Cancelar</button>
+          <button type="submit" id="send-email-btn">📤 Enviar Correo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <style>
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(4px);
+    }
+    .modal-content {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 450px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+      position: relative;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-header h2 {
+      margin: 0;
+      font-size: 18px;
+      color: #fff;
+      border: 0;
+      padding: 0;
+    }
+    .close-btn {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      box-shadow: none;
+    }
+    .close-btn:hover {
+      color: #fff;
+      background: transparent;
+      box-shadow: none;
+      transform: none;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    @media print {
+      /* Ocultar elementos de UI */
+      .app-sidebar, .app-header, .header-actions, .modal-overlay, #email-modal, .tab-nav {
+        display: none !important;
+      }
+      /* Resetear contenedores para que fluyan naturalmente */
+      body, html, .app-container, .app-main, .tab-content, #pdf-report-content {
+        display: block !important;
+        position: static !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      /* Asegurar que nada oculte contenido y box-sizing correcto */
+      * {
+        overflow: visible !important;
+        box-sizing: border-box !important;
+      }
+      /* Limpiar flotantes para evitar colapso de contenedores */
+      .pdf-kpis::after, .pdf-grid-2::after, .alerts-grid::after {
+        content: "" !important;
+        display: table !important;
+        clear: both !important;
+      }
+      /* Colores y bordes aptos para impresion */
+      body, .panel {
+      }
+      .panel {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        box-shadow: none !important;
+        border: 1px solid #ddd !important;
+        margin-bottom: 24px !important;
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      /* Desarmar grids para que bajen en pila y no se corten lateralmente */
+      .pdf-grid-2, .pdf-grid-3, .pdf-grid-4, .pdf-grid-5 {
+        display: block !important;
+      }
+      .bar-fill, .budget-fill {
+        transition: none !important;
+      }
+    }
+  </style>
+
+  <!-- Carga de html2pdf.js -->
+  <script src="/html2pdf.bundle.min.js"></script>
+
+  <script>
+    
+    
+    
+    
+    function getPDFOptions(filename, exactHeight) {
+      return {
+        margin:       0,
+        filename:     filename,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#0f172a',
+          scrollX: 0,
+          scrollY: 0,
+          width: 780,
+          windowWidth: 780,
+          height: exactHeight,
+          windowHeight: exactHeight,
+          x: 0,
+          y: 0,
+          onclone: function(clonedDoc) {
+            clonedDoc.documentElement.style.cssText = "width:780px!important;min-width:780px!important;overflow:hidden!important;background:#0f172a!important;";
+            clonedDoc.body.style.cssText = "width:780px!important;min-width:780px!important;margin:0!important;padding:0!important;overflow:hidden!important;background:#0f172a!important;";
+            
+            const mainContent = clonedDoc.querySelector(".main-content");
+            if (mainContent) {
+              mainContent.style.cssText = "margin:0!important;padding:0!important;width:100%!important;border:none!important;background:#0f172a!important;";
+            }
+            const appContainer = clonedDoc.querySelector(".app-container");
+            if (appContainer) {
+              appContainer.style.cssText = "margin:0!important;padding:0!important;width:100%!important;background:#0f172a!important;";
+            }
+            const sidebar = clonedDoc.querySelector(".sidebar");
+            if (sidebar) {
+              sidebar.style.display = "none";
+            }
+            
+            const elementToRender = clonedDoc.getElementById("pdf-report-content");
+            if (elementToRender) {
+              elementToRender.classList.add("pdf-mode");
+              // Set initial css text without min-height to get natural height
+              elementToRender.style.cssText = "width:780px!important;max-width:780px!important;min-width:780px!important;background:#0f172a!important;padding:40px 44px!important;overflow:visible!important;box-shadow:none!important;margin:0!important;left:0!important;display:block!important;position:relative!important;box-sizing:border-box!important;";
+              
+              // We don't need min-height anymore since the page size is exact
+              // elementToRender.style.setProperty("min-height", finalHeight + "px", "important");
+            }
+            
+            const footers = clonedDoc.querySelectorAll(".pdf-mode .budget-foot, .pdf-mode .bar-labels");
+            footers.forEach(foot => {
+              foot.style.cssText = "display:block!important;width:100%!important;overflow:hidden!important;";
+              const children = foot.children;
+              if (children.length >= 2) {
+                 children[0].style.cssText = "float:left!important;";
+                 children[1].style.cssText = "float:right!important;";
+              }
+            });
+          }
+        },
+        pagebreak:    { mode: ['avoid-all'] },
+        jsPDF:        { unit: 'px', format: [780, exactHeight || 1104], orientation: 'portrait' }
+      };
+    }
+
+    async function downloadPDF(event) {
+      if (event) event.preventDefault();
+      const btn = event ? event.currentTarget : null;
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Generando PDF...';
+      }
+      
+      const element = document.getElementById("pdf-report-content");
+      if (!element) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '📄 Descargar PDF (v7)';
+        }
+        return;
+      }
+      
+      document.body.classList.add("pdf-generating");
+      element.classList.add("pdf-mode");
+      element.style.cssText = 'width:780px!important;max-width:780px!important;min-width:780px!important;background:#0f172a!important;padding:40px 44px!important;overflow:visible!important;box-shadow:none!important;margin:0!important;left:0!important;display:block!important;position:relative!important;box-sizing:border-box!important;';
+      
+      try {
+        const reportDateMatch = document.body.innerHTML.match(/Fecha del Reporte:\s*([\d\/]+)/);
+        let reportDate = new Date().toISOString().split('T')[0];
+        if (reportDateMatch && reportDateMatch[1]) {
+          const parts = reportDateMatch[1].split('/');
+          if (parts.length === 3) reportDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+        const filename = `Resumen_Comercial_${reportDate}.pdf`;
+        
+        // Create an off-screen clone to measure exact height in PDF mode
+        const clone = element.cloneNode(true);
+        clone.classList.add("pdf-mode");
+        clone.style.cssText = 'width:780px!important;max-width:780px!important;min-width:780px!important;background:#0f172a!important;padding:40px 44px!important;overflow:visible!important;box-shadow:none!important;margin:0!important;left:0!important;display:block!important;position:absolute!important;top:-9999px!important;visibility:hidden!important;box-sizing:border-box!important;';
+        document.body.appendChild(clone);
+        const exactHeight = clone.scrollHeight || clone.offsetHeight;
+        document.body.removeChild(clone);
+        
+        const opt = getPDFOptions(filename, exactHeight);
+        
+        const worker = html2pdf().set(opt).from(element);
+        await worker.toPdf().get('pdf').then(function(pdf) {
+          const totalPages = pdf.internal.getNumberOfPages();
+          for (let i = totalPages; i > 1; i--) {
+            pdf.deletePage(i);
+          }
+        });
+        const pdfBlob = await worker.output('blob');
+        const formData = new FormData();
+        formData.append("pdf", pdfBlob, filename);
+        
+        try {
+          const response = await fetch(`/save-pdf?date=${reportDate}`, {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          if (data && data.success) {
+            console.log("Copia de PDF respaldada con éxito en el servidor:", data.filename);
+            window.location.href = `/download-pdf?date=${reportDate}&filename=${encodeURIComponent(filename)}`;
+          } else {
+            console.warn("Fallo al respaldar, descargando blob localmente.");
+            saveAs(pdfBlob, filename);
+          }
+        } catch(e) {
+          console.error("Error al enviar PDF al servidor:", e);
+          saveAs(pdfBlob, filename);
+        }
+      } catch (err) {
+        console.error('Error generando PDF:', err);
+        alert('Hubo un error al generar el PDF. Revisa la consola.');
+      } finally {
+        element.style.cssText = '';
+        element.classList.remove("pdf-mode");
+        document.body.classList.remove("pdf-generating");
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '📄 Descargar PDF (v7)';
+        }
+      }
+    }
+
+    function openEmailModal() {
+      document.getElementById("email-modal").style.display = "flex";
+      document.getElementById("dest-email").focus();
+    }
+    
+    function closeEmailModal() {
+      document.getElementById("email-modal").style.display = "none";
+    }
+
+    async function sendEmail(event) {
+      event.preventDefault();
+      const emailInput = document.getElementById("dest-email");
+      const toEmail = emailInput.value.trim();
+      const sendBtn = document.getElementById("send-email-btn");
+      
+      if (!toEmail) return;
+      
+      const element = document.getElementById("pdf-report-content");
+      if (!element) return;
+      
+      sendBtn.disabled = true;
+      sendBtn.innerText = "⏳ Generando PDF...";
+      
+      const appContainer = document.querySelector(".app-container");
+      const parent = element.parentElement;
+      const nextSibling = element.nextSibling;
+      
+      const originalScrollX = window.scrollX;
+      const originalScrollY = window.scrollY;
+      window.scrollTo(0, 0);
+      
+      if (appContainer) appContainer.style.display = "none";
+      document.body.appendChild(element);
+      document.body.classList.add("pdf-generating");
+      element.classList.add("pdf-mode");
+      element.style.cssText = 'width:780px!important;max-width:780px!important;min-width:780px!important;background:#0f172a!important;padding:0 44px!important;overflow:visible!important;box-shadow:none!important;margin:0!important;left:0!important;display:block!important;position:relative!important;';
+      
+      await new Promise(resolve => setTimeout(resolve, 150));
+      
+      try {
+        const filename = `Resumen_Comercial_${new Date().toISOString().split('T')[0]}.pdf`;
+        const opt = getPDFOptions(filename);
+        
+        const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+        
+        sendBtn.innerText = "📧 Enviando Correo...";
+        
+        // Preparar FormData
+        const formData = new FormData();
+        formData.append("to_email", toEmail);
+        formData.append("pdf", pdfBlob, filename);
+        
+        // Enviar al servidor
+        const response = await fetch("/send-email", {
+          method: "POST",
+          body: formData
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+          alert("✅ ¡Resumen enviado con éxito por correo electrónico!");
+          closeEmailModal();
+        } else {
+          alert("❌ Error: " + result.error);
+        }
+      } catch (err) {
+        console.error("Error al enviar email:", err);
+        alert("❌ Ocurrió un error al enviar el correo.");
+      } finally {
+        element.classList.remove("pdf-mode");
+        element.style.cssText = '';
+        document.body.classList.remove("pdf-generating");
+        
+        if (nextSibling) {
+          parent.insertBefore(element, nextSibling);
+        } else {
+          parent.appendChild(element);
+        }
+        
+        if (appContainer) appContainer.style.display = "";
+        window.scrollTo(originalScrollX, originalScrollY);
+        
+        sendBtn.disabled = false;
+        sendBtn.innerText = "📤 Enviar Correo";
+      }
+    }
+    function switchTab(tabId) {
+      try {
+        // Ocultar todos los contenidos de pestaña
+        document.querySelectorAll(".tab-content").forEach(el => {
+          el.classList.remove("active");
+        });
+        // Mostrar el contenido de la pestaña seleccionada
+        const targetContent = document.getElementById(tabId);
+        if (targetContent) {
+          targetContent.classList.add("active");
+        }
+        
+        // Quitar clase activa de todos los botones
+        document.querySelectorAll(".nav-item").forEach(el => {
+          el.classList.remove("active");
+        });
+        // Añadir clase activa al botón correspondiente
+        const targetNav = document.getElementById("nav-" + tabId);
+        if (targetNav) {
+          targetNav.classList.add("active");
+        }
+        
+        // Guardar en localStorage
+        localStorage.setItem("selectedTab", tabId);
+      } catch (err) {
+        alert("Error in switchTab: " + err.message);
+      }
+    }
+    
+    document.addEventListener("DOMContentLoaded", () => {
+      // Cargar pestaña persistida o por defecto
+      const savedTab = localStorage.getItem("selectedTab");
+      const validTabs = ["resumen-ejecutivo", "resumen-diario", "previsiones-cierre", "calendario-entregas", "alertas-auditoria", "cartera-comparativas", "produccion-dashboard", "importar-datos"];
+      if (savedTab && validTabs.includes(savedTab) && document.getElementById(savedTab)) {
+        switchTab(savedTab);
+      } else {
+        switchTab("resumen-ejecutivo");
+      }
+
+      // Smooth progress bar animations
+      setTimeout(() => {
+        document.querySelectorAll(".bar-fill").forEach(fill => {
+          const styleWidth = fill.style.width;
+          fill.style.width = '0%';
+          setTimeout(() => { fill.style.width = styleWidth; }, 50);
+        });
+        document.querySelectorAll(".budget-fill").forEach(fill => {
+          const styleWidth = fill.style.width;
+          fill.style.width = '0%';
+          setTimeout(() => { fill.style.width = styleWidth; }, 50);
+        });
+      }, 100);
+
+      // Habilitar ordenación en todas las tablas
+      function makeTablesSortable() {
+        const tables = document.querySelectorAll("table");
+        tables.forEach(table => {
+          // Normalizar estructura de la tabla si no tiene thead/tbody explícitos
+          let thead = table.querySelector("thead");
+          let tbody = table.querySelector("tbody");
+          
+          if (!thead) {
+            thead = document.createElement("thead");
+            const firstRow = table.querySelector("tr");
+            if (firstRow) {
+              const cells = firstRow.querySelectorAll("td, th");
+              const newHeaderRow = document.createElement("tr");
+              cells.forEach(cell => {
+                const th = document.createElement("th");
+                th.innerHTML = cell.innerHTML;
+                for (let attr of cell.attributes) {
+                  th.setAttribute(attr.name, attr.value);
+                }
+                newHeaderRow.appendChild(th);
+              });
+              thead.appendChild(newHeaderRow);
+              firstRow.remove();
+              table.insertBefore(thead, table.firstChild);
+            }
+          }
+          
+          if (!tbody) {
+            tbody = document.createElement("tbody");
+            const remainingRows = Array.from(table.querySelectorAll("tr")).filter(row => !thead.contains(row));
+            remainingRows.forEach(row => tbody.appendChild(row));
+            table.appendChild(tbody);
+          }
+          
+          const headers = thead.querySelectorAll("th");
+          if (!headers.length) return;
+          
+          table.setAttribute("data-sort-col", "-1");
+          table.setAttribute("data-sort-dir", "asc");
+          
+          headers.forEach((header, index) => {
+            header.style.cursor = "pointer";
+            header.style.userSelect = "none";
+            header.classList.add("sortable-header");
+            
+            // Eliminar indicador previo si existiera
+            const prevInd = header.querySelector(".sort-indicator");
+            if (prevInd) prevInd.remove();
+            
+            const indicator = document.createElement("span");
+            indicator.className = "sort-indicator";
+            indicator.innerHTML = "↕";
+            header.appendChild(indicator);
+            
+            header.addEventListener("click", () => {
+              const currentSortCol = parseInt(table.getAttribute("data-sort-col") || "-1");
+              let dir = table.getAttribute("data-sort-dir") || "asc";
+              
+              if (currentSortCol === index) {
+                dir = dir === "asc" ? "desc" : "asc";
+              } else {
+                dir = "asc";
+              }
+              
+              table.setAttribute("data-sort-col", index.toString());
+              table.setAttribute("data-sort-dir", dir);
+              
+              headers.forEach((h, idx) => {
+                const ind = h.querySelector(".sort-indicator");
+                if (ind) {
+                  if (idx === index) {
+                    ind.innerHTML = dir === "asc" ? "▲" : "▼";
+                    ind.classList.add("active");
+                  } else {
+                    ind.innerHTML = "↕";
+                    ind.classList.remove("active");
+                  }
+                }
+              });
+              
+              const rows = Array.from(tbody.querySelectorAll("tr"));
+              if (rows.length === 0) return;
+              
+              // Determinar tipo de columna por sus valores no vacíos
+              const values = rows.map(row => {
+                const cell = row.cells[index];
+                return cell ? cell.textContent.trim() : "";
+              });
+              
+              const parseDate = (str) => {
+                const match = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+                if (match) {
+                  return new Date(match[3], match[2] - 1, match[1]).getTime();
+                }
+                return null;
+              };
+              
+              const parseNum = (str) => {
+                let cleanStr = str.replace(/[€$£%\sA-Za-z]/g, "");
+                if (cleanStr.includes(",") && cleanStr.includes(".")) {
+                  cleanStr = cleanStr.replace(/\./g, "").replace(/,/g, ".");
+                } else if (cleanStr.includes(",")) {
+                  cleanStr = cleanStr.replace(/,/g, ".");
+                } else if (cleanStr.includes(".")) {
+                  const parts = cleanStr.split(".");
+                  if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+                    cleanStr = cleanStr.replace(/\./g, "");
+                  }
+                }
+                const val = parseFloat(cleanStr);
+                return isNaN(val) ? -Infinity : val;
+              };
+              
+              let isDateCol = true;
+              let isNumCol = true;
+              let checkedCount = 0;
+              
+              for (let val of values) {
+                if (!val || val === "-" || val === "Sin fecha" || val.toLowerCase() === "n/d") continue;
+                checkedCount++;
+                
+                // Fecha
+                const firstWord = val.split(" ")[0];
+                if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(firstWord)) {
+                  isDateCol = false;
+                }
+                
+                // Número / importe / porcentaje
+                let cleanStr = val.replace(/[€$£%\sA-Za-z]/g, "");
+                if (cleanStr.includes(",") && cleanStr.includes(".")) {
+                  cleanStr = cleanStr.replace(/\./g, "").replace(/,/g, ".");
+                } else if (cleanStr.includes(",")) {
+                  cleanStr = cleanStr.replace(/,/g, ".");
+                }
+                if (!/\d/.test(val) || isNaN(parseFloat(cleanStr))) {
+                  isNumCol = false;
+                }
+              }
+              
+              if (checkedCount === 0) {
+                isDateCol = false;
+                isNumCol = false;
+              }
+              
+              rows.sort((a, b) => {
+                let cellA = a.cells[index];
+                let cellB = b.cells[index];
+                let valA = cellA ? cellA.textContent.trim() : "";
+                let valB = cellB ? cellB.textContent.trim() : "";
+                
+                const isValAEmpty = valA === "" || valA === "-" || valA.toLowerCase() === "n/d";
+                const isValBEmpty = valB === "" || valB === "-" || valB.toLowerCase() === "n/d";
+                if (isValAEmpty && isValBEmpty) return 0;
+                if (isValAEmpty) return 1;
+                if (isValBEmpty) return -1;
+                
+                if (isDateCol) {
+                  const dateA = parseDate(valA.split(" ")[0]);
+                  const dateB = parseDate(valB.split(" ")[0]);
+                  if (dateA !== null && dateB !== null) {
+                    return dir === "asc" ? dateA - dateB : dateB - dateA;
+                  }
+                }
+                
+                if (isNumCol) {
+                  const numA = parseNum(valA);
+                  const numB = parseNum(valB);
+                  return dir === "asc" ? numA - numB : numB - numA;
+                }
+                
+                return dir === "asc" 
+                  ? valA.localeCompare(valB, 'es', { numeric: true, sensitivity: 'base' })
+                  : valB.localeCompare(valA, 'es', { numeric: true, sensitivity: 'base' });
+              });
+              
+              rows.forEach(row => tbody.appendChild(row));
+            });
+          });
+        });
+      }
+      
+      makeTablesSortable();
+
+      // ---- Lógica de pedidos cargables y actualización dinámica de previsión ----
+      function formatMoney(value) {
+        return Math.round(Number(value)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' EUR';
+      }
+      
+      function formatPct(value) {
+        return Math.round(value * 100) + '%';
+      }
+
+      function updateForecast() {
+        let checkedAmount = 0;
+        let checkedCount = 0;
+
+        let checkedNac = 0;
+        let checkedExp = 0;
+
+        document.querySelectorAll('.order-chk').forEach(chk => {
+          const doc = chk.getAttribute('data-doc');
+          const importe = parseFloat(chk.getAttribute('data-importe')) || 0;
+          if (chk.checked) {
+            checkedAmount += importe;
+            checkedCount++;
+            if (chk.getAttribute('data-zona') === 'nacional') checkedNac += importe;
+            else checkedExp += importe;
+          }
+        });
+        
+        const initBarCargables = document.querySelector('.bar-row[data-bar="3-pedidos-cargables"]');
+        if (initBarCargables) {
+          initBarCargables.setAttribute('data-nac', checkedNac);
+          initBarCargables.setAttribute('data-exp', checkedExp);
+        }
+        const initExecBarCargables = document.getElementById('exec-bar-pedidos-cargables');
+        if (initExecBarCargables) {
+          initExecBarCargables.setAttribute('data-nac', checkedNac);
+          initExecBarCargables.setAttribute('data-exp', checkedExp);
+        }
+
+        // Guardar estado en localStorage
+        let selections = {};
+        document.querySelectorAll('.order-chk').forEach(chk => {
+          selections[chk.getAttribute('data-doc')] = chk.checked;
+        });
+        localStorage.setItem('orderSelections', JSON.stringify(selections));
+
+        // Obtener valores base del DOM
+        const summaryTable = document.getElementById('forecast-summary-table');
+        if (!summaryTable) return;
+
+        const rowBudget = summaryTable.querySelector('tr[data-row="budget"] .val');
+        const rowFacturado = summaryTable.querySelector('tr[data-row="facturado"] .val');
+        const rowAlbaranes = summaryTable.querySelector('tr[data-row="albaranes"] .val');
+        const rowAntiguos = summaryTable.querySelector('tr[data-row="pedidos-antiguos"] .val');
+
+        const budget = parseFloat(rowBudget ? rowBudget.getAttribute('data-raw') : 0) || 0;
+        const facturado = parseFloat(rowFacturado ? rowFacturado.getAttribute('data-raw') : 0) || 0;
+        const albaranes = parseFloat(rowAlbaranes ? rowAlbaranes.getAttribute('data-raw') : 0) || 0;
+        const antiguos = parseFloat(rowAntiguos ? rowAntiguos.getAttribute('data-raw') : 0) || 0;
+
+        // Recalcular
+        const totalForecast = facturado + albaranes + checkedAmount + antiguos;
+        const compliance = budget ? (totalForecast / budget) : 0;
+        const gap = totalForecast - budget;
+
+        // 1. Actualizar tabla resumen de previsiones
+        const rowCargablesVal = summaryTable.querySelector('tr[data-row="pedidos-cargables"] .val');
+        const rowCargablesQty = summaryTable.querySelector('tr[data-row="pedidos-cargables"] .qty');
+        if (rowCargablesVal) {
+          rowCargablesVal.textContent = formatMoney(checkedAmount);
+          rowCargablesVal.setAttribute('data-raw', checkedAmount.toString());
+        }
+        if (rowCargablesQty) {
+          rowCargablesQty.textContent = checkedCount.toString();
+        }
+
+        const rowEstimacionVal = summaryTable.querySelector('tr[data-row="estimacion"] .val');
+        if (rowEstimacionVal) {
+          rowEstimacionVal.textContent = formatMoney(totalForecast);
+          rowEstimacionVal.setAttribute('data-raw', totalForecast.toString());
+        }
+
+        const rowEsperadoVal = summaryTable.querySelector('tr[data-row="cumplimiento-esperado"] .val');
+        if (rowEsperadoVal) {
+          rowEsperadoVal.textContent = formatPct(compliance);
+        }
+
+        const rowGapVal = summaryTable.querySelector('tr[data-row="gap"] .val');
+        if (rowGapVal) {
+          rowGapVal.textContent = formatMoney(gap);
+        }
+
+        // 2. Actualizar barra de progreso #budget-esperado (pestaña Previsiones y Cierre)
+        const budgetEsperadoCard = document.getElementById('budget-esperado');
+        if (budgetEsperadoCard) {
+          const fill = budgetEsperadoCard.querySelector('.budget-fill');
+          const pctText = budgetEsperadoCard.querySelector('.pct');
+          const footText = budgetEsperadoCard.querySelector('.budget-foot');
+
+          if (pctText) pctText.textContent = formatPct(compliance);
+          if (fill) {
+            fill.style.width = Math.min(100, compliance * 100) + '%';
+            if (compliance >= 1) fill.classList.add('over');
+            else fill.classList.remove('over');
+          }
+          if (footText) footText.textContent = `Est. Cierre: ${formatMoney(totalForecast)} / Presupuesto: ${formatMoney(budget)}`;
+        }
+
+        // 3. Actualizar gráfico de barras (bridge chart) en Previsiones y Cierre
+        const maxBarVal = Math.max(facturado, albaranes, checkedAmount, antiguos, totalForecast, 1.0);
+        const barFacturado = document.querySelector('.bar-row[data-bar="1-facturado"]');
+        const barAlbaranes = document.querySelector('.bar-row[data-bar="2-albaranes-pend"]');
+        const barCargables = document.querySelector('.bar-row[data-bar="3-pedidos-cargables"]');
+        const barAntiguos = document.querySelector('.bar-row[data-bar="4-backlog-antiguo"]');
+        const barEstimacion = document.querySelector('.bar-row[data-bar="5-estimacin-cierre"]');
+
+        const updateBarRow = (el, val) => {
+          if (!el) return;
+          const valText = el.querySelector('.bar-value');
+          if (valText) valText.textContent = formatMoney(val);
+          
+          const fillNac = el.querySelector('.bar-fill.nac');
+          const fillExp = el.querySelector('.bar-fill.exp');
+          if (fillNac || fillExp) {
+             const nac = parseFloat(el.getAttribute('data-nac')) || 0;
+             const exp = parseFloat(el.getAttribute('data-exp')) || 0;
+             if (fillNac) fillNac.style.width = (nac / maxBarVal * 100) + '%';
+             if (fillExp) fillExp.style.width = (exp / maxBarVal * 100) + '%';
+             const subtext = el.querySelector('.split-subtext');
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
+          } else {
+             const fill = el.querySelector('.bar-fill');
+             if (fill) fill.style.width = Math.max(2, (Math.abs(val) / maxBarVal * 100)) + '%';
+          }
+        };
+
+        updateBarRow(barFacturado, facturado);
+        updateBarRow(barAlbaranes, albaranes);
+        updateBarRow(barCargables, checkedAmount);
+        updateBarRow(barAntiguos, antiguos);
+        updateBarRow(barEstimacion, totalForecast);
+
+        // 4. Actualizar barra de progreso #executive-budget-esperado (Resumen Ejecutivo)
+        const execBudgetCard = document.getElementById('executive-budget-esperado');
+        if (execBudgetCard) {
+          const fill = execBudgetCard.querySelector('.budget-fill');
+          const pctText = execBudgetCard.querySelector('.budget-head span');
+          const footText = execBudgetCard.querySelector('.budget-foot');
+
+          if (pctText) pctText.textContent = formatPct(compliance);
+          if (fill) {
+            fill.style.width = Math.min(100, compliance * 100) + '%';
+            if (compliance >= 1) fill.classList.add('over');
+            else fill.classList.remove('over');
+          }
+          if (footText) {
+            footText.innerHTML = `<span>Est. Cierre: ${formatMoney(totalForecast)}</span><span>Gap: ${formatMoney(gap)}</span>`;
+          }
+        }
+
+        // 5. Actualizar gráfico de composición en Resumen Ejecutivo
+        const execBarFacturado = document.getElementById('exec-bar-facturado');
+        const execBarAlbaranes = document.getElementById('exec-bar-albaranes');
+        const execBarCargables = document.getElementById('exec-bar-pedidos-cargables');
+        const execBarEstimacion = document.getElementById('exec-bar-estimacion-total');
+
+        const updateExecBar = (el, val) => {
+          if (!el) return;
+          const valText = el.querySelector('.bar-value');
+          if (valText) valText.textContent = formatMoney(val);
+          
+          const fillNac = el.querySelector('.bar-fill.nac');
+          const fillExp = el.querySelector('.bar-fill.exp');
+          if (fillNac || fillExp) {
+             const nac = parseFloat(el.getAttribute('data-nac')) || 0;
+             const exp = parseFloat(el.getAttribute('data-exp')) || 0;
+             const widthNac = totalForecast ? (nac / totalForecast * 100) : 0;
+             const widthExp = totalForecast ? (exp / totalForecast * 100) : 0;
+             if (fillNac) fillNac.style.width = widthNac + '%';
+             if (fillExp) fillExp.style.width = widthExp + '%';
+             const subtext = el.querySelector('.split-subtext');
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
+          } else {
+             const fill = el.querySelector('.bar-fill');
+             if (fill) {
+               const width = totalForecast ? (val / totalForecast * 100) : 0;
+               fill.style.width = width + '%';
+             }
+          }
+        };
+
+        updateExecBar(execBarFacturado, facturado);
+        updateExecBar(execBarAlbaranes, albaranes);
+        updateExecBar(execBarCargables, checkedAmount);
+        
+        if (execBarEstimacion) {
+          const valText = execBarEstimacion.querySelector('.bar-value');
+          if (valText) valText.textContent = formatMoney(totalForecast);
+        }
+      }
+
+      // Escuchar cambios de selección
+      document.body.addEventListener('change', event => {
+        if (event.target && event.target.classList.contains('order-chk')) {
+          updateForecast();
+        }
+      });
+
+      // Restaurar selecciones desde localStorage al cargar
+      const savedSelections = localStorage.getItem('orderSelections');
+      if (savedSelections) {
+        try {
+          const selections = JSON.parse(savedSelections);
+          document.querySelectorAll('.order-chk').forEach(chk => {
+            const doc = chk.getAttribute('data-doc');
+            if (selections[doc] !== undefined) {
+              chk.checked = selections[doc];
+            }
+          });
+        } catch (e) {
+          console.error("Error restoring checkbox selections:", e);
+        }
+      }
+
+      // Ejecutar actualización inicial por si hay elementos desmarcados al cargar
+      updateForecast();
+
+      // Auto-disparar generación de PDF si se indica en la URL
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('trigger_pdf') === 'true') {
+        console.log("Auto-disparando descarga de PDF...");
+        setTimeout(() => {
+          downloadPDF(null);
+        }, 2000);
+      }
+    });
+  
+  </script>
+</body>
+</html>
