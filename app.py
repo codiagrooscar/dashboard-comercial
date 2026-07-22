@@ -2423,8 +2423,8 @@ class Handler(BaseHTTPRequestHandler):
         return
 def main() -> None:
     os.chdir(BASE_DIR)
-    with socketserver.ThreadingTCPServer(('127.0.0.1', PORT), Handler) as httpd:
-        print(json.dumps({'url': f'http://127.0.0.1:{PORT}', 'status': 'running'}), flush=True)
+    with socketserver.ThreadingTCPServer(('0.0.0.0', PORT), Handler) as httpd:
+        print(json.dumps({'url': f'http://0.0.0.0:{PORT}', 'status': 'running'}), flush=True)
         httpd.serve_forever()
 if __name__ == '__main__':
     main()
