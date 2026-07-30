@@ -315,7 +315,17 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             df = df[df['cliente'].astype(str).str.strip() != '']
         if 'documento' in df.columns:
             df = df[df['documento'].astype(str).str.strip() != '']
-        
+
+        if kind == 'facturas' and 'cif' in df.columns and 'importe' in df.columns:
+            mask = df['cif'].astype(str).str.upper().str.startswith('ES')
+            df.loc[mask, 'importe'] = df.loc[mask, 'importe'] / 1.10
+        elif kind in ('albaranes', 'ofertas', 'pedidos') and 'serie' in df.columns:
+            mask = df['serie'].astype(str).str.strip() == ''
+            if 'importe' in df.columns:
+                df.loc[mask, 'importe'] = df.loc[mask, 'importe'] / 1.10
+            if kind == 'pedidos' and 'importe_pendiente' in df.columns:
+                df.loc[mask, 'importe_pendiente'] = df.loc[mask, 'importe_pendiente'] / 1.10
+
         return df
 def supabase_request_all(path: str, query_params: dict | None = None) -> list:
     if query_params is None:
