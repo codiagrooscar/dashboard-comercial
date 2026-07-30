@@ -88,6 +88,8 @@ def clean_df_for_json(df: pd.DataFrame, report_date: str) -> list[dict[str, Any]
             else:
                 if isinstance(v, (pd.Timestamp, datetime)):
                     d[k] = v.strftime('%Y-%m-%d')
+                elif hasattr(v, 'isoformat'):
+                    d[k] = v.isoformat()
                 else:
                     if isinstance(v, (set, list)):
                         d[k] = list(v)
@@ -97,6 +99,18 @@ def save_data_to_supabase(report_date: str, dfs: dict[str, pd.DataFrame]) -> Non
     for name, df in dfs.items():
         supabase_request(name, method='DELETE', query_params={'report_date': f'eq.{report_date}'})
         df_to_save = df.drop(columns=['id'], errors='ignore')
+        
+        if name == 'produccion':
+            allowed_cols = [
+                'idot', 'fecha', 'codigoarticulo', 'descripcionarticulo',
+                'unidadesafabricar', 'unidadesfabricadas', 'unidadesrechazadas',
+                'tiempototal', 'tiemporealtotal', 'tiempofabricacion', 'tiempopreparacion', 'tiempoparadas',
+                'costetotal', 'costerealtotal', 'costerealmaquina', 'costerealmanoobra',
+                'descripcionmaquina'
+            ]
+            cols_to_keep = [c for c in allowed_cols if c in df_to_save.columns]
+            df_to_save = df_to_save[cols_to_keep]
+            
         records = clean_df_for_json(df_to_save, report_date)
         if records:
             batch_size = 500
@@ -114,7 +128,7 @@ def save_data_to_local(report_date: str, dfs: dict[str, pd.DataFrame]) -> None:
 def load_data_from_local(report_date: str) -> dict[str, pd.DataFrame] | None:
     dfs = {}
     found_any = False
-    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas']:
+    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
         path = local_data_path(report_date, name)
         if path.exists():
             found_any = True
@@ -131,16 +145,56 @@ def save_report_data(report_date: str, dfs: dict[str, pd.DataFrame]) -> None:
     save_data_to_local(report_date, dfs)
     if SUPABASE_ENABLED:
         save_data_to_supabase(report_date, dfs)
-def load_report_data(report_date: str) -> dict[str, pd.DataFrame] | None:
+def load_report_data(report_date: str, fallback: bool = True) -> dict[str, pd.DataFrame] | None:
+    dfs = None
     if SUPABASE_ENABLED:
         try:
-            supabase_dfs = load_data_from_supabase(report_date)
-            if supabase_dfs is not None:
-                save_data_to_local(report_date, supabase_dfs)
-                return supabase_dfs
+            dfs = load_data_from_supabase(report_date)
+            if dfs is not None:
+                save_data_to_local(report_date, dfs)
         except Exception as exc:
             print(f'No se pudo cargar desde Supabase: {exc}')
-    return load_data_from_local(report_date)
+            
+    if dfs is None:
+        dfs = load_data_from_local(report_date)
+        
+    if dfs is None and fallback:
+        # Fallback a la foto más reciente disponible
+        if SUPABASE_ENABLED:
+            try:
+                records = supabase_request('produccion', query_params={'select': 'report_date'})
+                if not records:
+                    records = supabase_request('facturas', query_params={'select': 'report_date'})
+                if records:
+                    valid_dates = sorted(list(set((r['report_date'] for r in records if r.get('report_date')))), reverse=True)
+                    if valid_dates:
+                        best_date = valid_dates[0]
+                        for d in valid_dates:
+                            if d <= report_date:
+                                best_date = d
+                                break
+                        if best_date != report_date:
+                            print(f'Falling back to snapshot {best_date} for requested {report_date}')
+                            return load_report_data(best_date, fallback=False)
+            except Exception as e:
+                pass
+                
+        # Fallback local
+        if LOCAL_DATA_DIR.exists():
+            local_dirs = [d.name for d in LOCAL_DATA_DIR.iterdir() if d.is_dir() and re.match(r'^\d{4}-\d{2}-\d{2}$', d.name) and d.name != '9999-12-31']
+            if local_dirs:
+                valid_dates = sorted(local_dirs, reverse=True)
+                if valid_dates:
+                    best_date = valid_dates[0]
+                    for d in valid_dates:
+                        if d <= report_date:
+                            best_date = d
+                            break
+                    if best_date != report_date:
+                        print(f'Falling back locally to snapshot {best_date} for requested {report_date}')
+                        return load_report_data(best_date, fallback=False)
+                        
+    return dfs
 
 def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
     if df.empty:
@@ -149,41 +203,61 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             cols += ['descripcion']
         if kind == 'pedidos':
             cols += ['fecha_necesaria', 'importe_pendiente', 'unidades_pedidas', 'unidades_servidas', 'unidades_pendientes']
+        if kind == 'stock':
+            cols = ['codigo', 'descripcion', 'familia', 'cantidad']
         return pd.DataFrame(columns=cols)
     else:
-        if 'documento' not in df.columns:
-            df['documento'] = ''
-        df['documento'] = df['documento'].fillna('').astype(str)
-        df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
-        if 'importe' not in df.columns:
-            df['importe'] = 0.0
-        df['importe'] = pd.to_numeric(df['importe'], errors='coerce').fillna(0.0)
-        if 'cliente' not in df.columns:
-            df['cliente'] = ''
-        df['cliente'] = df['cliente'].fillna('').astype(str).str.replace('\\.0$', '', regex=True).str.strip()
-        if 'razon_social' not in df.columns:
-            df['razon_social'] = ''
-        df['razon_social'] = df['razon_social'].fillna('').astype(str).str.strip()
-        if 'articulo' not in df.columns:
-            df['articulo'] = ''
-        df['articulo'] = df['articulo'].fillna('').astype(str).str.strip()
-        if 'serie' not in df.columns:
-            df['serie'] = ''
-        df['serie'] = df['serie'].fillna('').astype(str).str.strip()
-        if 'zona' not in df.columns:
-            df['zona'] = ''
-        df['zona'] = df['zona'].fillna('').astype(str).str.strip()
-        if kind in ['pedidos', 'ofertas']:
-            if 'descripcion' not in df.columns:
-                df['descripcion'] = ''
+        if kind not in ('produccion', 'stock'):
+            if 'documento' not in df.columns:
+                df['documento'] = ''
+            df['documento'] = df['documento'].fillna('').astype(str)
+            if 'fecha' not in df.columns:
+                df['fecha'] = pd.NaT
+            df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
+            if 'importe' not in df.columns:
+                df['importe'] = 0.0
+            df['importe'] = pd.to_numeric(df['importe'], errors='coerce').fillna(0.0)
+            if 'cliente' not in df.columns:
+                df['cliente'] = ''
+            df['cliente'] = df['cliente'].fillna('').astype(str).str.replace('\\.0$', '', regex=True).str.strip()
+            if 'razon_social' not in df.columns:
+                df['razon_social'] = ''
+            df['razon_social'] = df['razon_social'].fillna('').astype(str).str.strip()
+            if 'articulo' not in df.columns:
+                df['articulo'] = ''
+            df['articulo'] = df['articulo'].fillna('').astype(str).str.strip()
+            if 'serie' not in df.columns:
+                df['serie'] = ''
+            df['serie'] = df['serie'].fillna('').astype(str).str.strip()
+            if 'zona' not in df.columns:
+                df['zona'] = ''
+            df['zona'] = df['zona'].fillna('').astype(str).str.strip()
+            if kind in ['pedidos', 'ofertas']:
+                if 'descripcion' not in df.columns:
+                    df['descripcion'] = ''
+                df['descripcion'] = df['descripcion'].fillna('').astype(str).str.strip()
+            if kind == 'pedidos':
+                df['fecha_necesaria'] = pd.to_datetime(df.get('fecha_necesaria'), errors='coerce')
+                df['importe_pendiente'] = pd.to_numeric(df.get('importe_pendiente'), errors='coerce').fillna(0.0)
+                df['unidades_pedidas'] = pd.to_numeric(df.get('unidades_pedidas'), errors='coerce').fillna(0.0)
+                df['unidades_servidas'] = pd.to_numeric(df.get('unidades_servidas'), errors='coerce').fillna(0.0)
+                df['unidades_pendientes'] = pd.to_numeric(df.get('unidades_pendientes'), errors='coerce').fillna(0.0)
+        elif kind == 'stock':
+            col_map = {}
+            for col in df.columns:
+                norm_col = col.lower().strip().replace('ó', 'o').replace('í', 'i')
+                col_map[col] = norm_col
+            df = df.rename(columns=col_map)
+            
+            for req in ['codigo', 'descripcion', 'familia', 'cantidad']:
+                if req not in df.columns:
+                    df[req] = '' if req != 'cantidad' else 0.0
+            
+            df['codigo'] = df['codigo'].fillna('').astype(str).str.strip()
             df['descripcion'] = df['descripcion'].fillna('').astype(str).str.strip()
-        if kind == 'pedidos':
-            df['fecha_necesaria'] = pd.to_datetime(df.get('fecha_necesaria'), errors='coerce')
-            df['importe_pendiente'] = pd.to_numeric(df.get('importe_pendiente'), errors='coerce').fillna(0.0)
-            df['unidades_pedidas'] = pd.to_numeric(df.get('unidades_pedidas'), errors='coerce').fillna(0.0)
-            df['unidades_servidas'] = pd.to_numeric(df.get('unidades_servidas'), errors='coerce').fillna(0.0)
-            df['unidades_pendientes'] = pd.to_numeric(df.get('unidades_pendientes'), errors='coerce').fillna(0.0)
-        
+            df['familia'] = pd.to_numeric(df['familia'], errors='coerce').fillna(0).astype(int)
+            df['cantidad'] = pd.to_numeric(df['cantidad'], errors='coerce').fillna(0.0)
+            
         elif kind == 'produccion':
             # Normalizar nombres de columnas si vienen con tildes o espacios
             col_map = {}
@@ -192,17 +266,41 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
                 col_map[col] = norm_col
             df = df.rename(columns=col_map)
             
-            if 'fechainicio' in df.columns:
-                df['fecha'] = pd.to_datetime(df['fechainicio'], errors='coerce')
+            if 'descripcionarticulo1' in df.columns and 'descripcionarticulo' not in df.columns:
+                df['descripcionarticulo'] = df['descripcionarticulo1']
+                
+            # Arreglar columnas duplicadas en Excel (e.g. UnidadesFabricadas.1)
+            if 'unidadesfabricadas1' in df.columns:
+                df['unidadesfabricadas'] = df['unidadesfabricadas1']
+            if 'unidadesrechazadas1' in df.columns:
+                df['unidadesrechazadas'] = df['unidadesrechazadas1']
+                
+            if 'fechafinalreal' in df.columns:
+                df['fecha'] = pd.to_datetime(df['fechafinalreal'], errors='coerce')
             elif 'fechainicioreal' in df.columns:
                 df['fecha'] = pd.to_datetime(df['fechainicioreal'], errors='coerce')
+            elif 'fechainicio' in df.columns:
+                df['fecha'] = pd.to_datetime(df['fechainicio'], errors='coerce')
             else:
-                df['fecha'] = pd.NaT # Fallback
+                if 'fecha' not in df.columns:
+                    df['fecha'] = pd.NaT # Fallback
+                else:
+                    df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
             
             # Asegurar columnas numéricas
-            for c in ['unidadesfabricadas', 'unidadesrechazadas', 'tiempofabricacion', 'tiempopreparacion', 'tiempoparadas']:
+            numeric_cols = [
+                'unidadesfabricadas', 'unidadesrechazadas', 'unidadesafabricar',
+                'tiempototal', 'tiemporealtotal', 'tiempofabricacion', 'tiempopreparacion', 'tiempoparadas',
+                'costetotal', 'costerealtotal', 'costerealmaquina', 'costerealmanoobra'
+            ]
+            for c in numeric_cols:
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+            
+            # Limpiar strings
+            for c in ['idot', 'codigoarticulo', 'descripcionarticulo']:
+                if c in df.columns:
+                    df[c] = df[c].fillna('').astype(str).str.strip()
             
         # Clean up empty rows (e.g. totals or empty sheet rows)
         if 'cliente' in df.columns:
@@ -211,10 +309,29 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             df = df[df['documento'].astype(str).str.strip() != '']
         
         return df
+def supabase_request_all(path: str, query_params: dict | None = None) -> list:
+    if query_params is None:
+        query_params = {}
+    all_data = []
+    limit = 1000
+    offset = 0
+    while True:
+        params = query_params.copy()
+        params['limit'] = str(limit)
+        params['offset'] = str(offset)
+        chunk = supabase_request(path, method='GET', query_params=params)
+        if not chunk or not isinstance(chunk, list):
+            break
+        all_data.extend(chunk)
+        if len(chunk) < limit:
+            break
+        offset += limit
+    return all_data
+
 def load_data_from_supabase(report_date: str) -> dict[str, pd.DataFrame] | None:
     dfs = {}
-    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion']:
-        records = supabase_request(name, method='GET', query_params={'report_date': f'eq.{report_date}', 'select': '*'})
+    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+        records = supabase_request_all(name, query_params={'report_date': f'eq.{report_date}', 'select': '*'})
         if not records:
             dfs[name] = pd.DataFrame()
         else:
@@ -329,6 +446,8 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         out['unidades_pendientes'] = df[pending_col] if df[pending_col] is not None else 0.0
     return out
 def aggregate_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
+    if kind == 'produccion':
+        return df
     if df.empty:
         return pd.DataFrame(columns=['documento', 'fecha', 'fecha_necesaria', 'importe', 'importe_pendiente', 'cliente', 'razon_social', 'serie', 'zona', 'articulos', 'unidades_pedidas', 'unidades_servidas', 'unidades_pendientes', 'lineas', 'articulos_list', 'cif'])
     else:
@@ -367,7 +486,7 @@ def aggregate_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
         if 'unidades_pendientes' not in grouped.columns:
             grouped['unidades_pendientes'] = 0.0
         return grouped
-DEFAULT_FILES = {'ofertas': str(BASE_DIR / 'ofertas.xlsx'), 'pedidos': str(BASE_DIR / 'pedidos.xlsx'), 'albaranes': str(BASE_DIR / 'albaranes.xlsx'), 'facturas': str(BASE_DIR / 'facturas.xlsx'), 'produccion': str(BASE_DIR / 'produccion.xlsx')}
+DEFAULT_FILES = {'ofertas': str(BASE_DIR / 'ofertas.xlsx'), 'pedidos': str(BASE_DIR / 'pedidos.xlsx'), 'albaranes': str(BASE_DIR / 'albaranes.xlsx'), 'facturas': str(BASE_DIR / 'facturas.xlsx'), 'produccion': str(BASE_DIR / 'produccion.xlsx'), 'stock': str(BASE_DIR / 'stock.xlsx')}
 def norm(value: Any) -> str:
     text = '' if value is None else str(value)
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
@@ -998,14 +1117,21 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     metrics = {
         'mtd_unidades': float(mtd['unidadesfabricadas'].sum()) if not mtd.empty and 'unidadesfabricadas' in mtd.columns else 0.0,
         'mtd_rechazos': float(mtd['unidadesrechazadas'].sum()) if not mtd.empty and 'unidadesrechazadas' in mtd.columns else 0.0,
-        'mtd_tiempo_fab': float(mtd['tiempofabricacion'].sum()) if not mtd.empty and 'tiempofabricacion' in mtd.columns else 0.0,
-        'mtd_tiempo_prep': float(mtd['tiempopreparacion'].sum()) if not mtd.empty and 'tiempopreparacion' in mtd.columns else 0.0,
-        'mtd_tiempo_par': float(mtd['tiempoparadas'].sum()) if not mtd.empty and 'tiempoparadas' in mtd.columns else 0.0,
+        # Los tiempos en Excel vienen como fracción de día. Multiplicamos por 24 para pasarlos a horas.
+        'mtd_tiempo_real': float(mtd['tiemporealtotal'].sum()) * 24 if not mtd.empty and 'tiemporealtotal' in mtd.columns else 0.0,
+        'mtd_tiempo_teorico': float(mtd['tiempototal'].sum()) * 24 if not mtd.empty and 'tiempototal' in mtd.columns else 0.0,
+        'mtd_coste_real': float(mtd['costerealtotal'].sum()) if not mtd.empty and 'costerealtotal' in mtd.columns else 0.0,
+        'mtd_coste_teorico': float(mtd['costetotal'].sum()) if not mtd.empty and 'costetotal' in mtd.columns else 0.0,
         
         'daily_unidades': float(daily['unidadesfabricadas'].sum()) if not daily.empty and 'unidadesfabricadas' in daily.columns else 0.0,
-        
         'pmtd_unidades': float(pmtd['unidadesfabricadas'].sum()) if not pmtd.empty and 'unidadesfabricadas' in pmtd.columns else 0.0,
     }
+
+    # Calculos derivados
+    metrics['oee'] = (metrics['mtd_tiempo_teorico'] / metrics['mtd_tiempo_real']) * 100 if metrics['mtd_tiempo_real'] > 0 else 0.0
+    metrics['scrap_rate'] = (metrics['mtd_rechazos'] / (metrics['mtd_unidades'] + metrics['mtd_rechazos'])) * 100 if (metrics['mtd_unidades'] + metrics['mtd_rechazos']) > 0 else 0.0
+    metrics['coste_desviacion'] = metrics['mtd_coste_teorico'] - metrics['mtd_coste_real'] # Positivo = Ahorro, Negativo = Sobrecoste
+    metrics['coste_unitario'] = metrics['mtd_coste_real'] / metrics['mtd_unidades'] if metrics['mtd_unidades'] > 0 else 0.0
 
     # Evolucion diaria MTD
     daily_evolution = []
@@ -1015,14 +1141,18 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
             daily_evolution.append({'fecha': row['fecha'].strftime('%Y-%m-%d'), 'unidades': float(row['unidadesfabricadas'])})
     metrics['daily_evolution'] = sorted(daily_evolution, key=lambda x: x['fecha'])
     
-    # Top maquinas (por volumen)
-    top_maquinas = []
-    if not mtd.empty and 'descripcionmaquina' in mtd.columns and 'unidadesfabricadas' in mtd.columns:
-        maq_grouped = mtd.groupby('descripcionmaquina')['unidadesfabricadas'].sum().reset_index()
-        maq_sorted = maq_grouped.sort_values(by='unidadesfabricadas', ascending=False).head(5)
+    # Top articulos (por coste real)
+    top_articulos = []
+    if not mtd.empty and 'descripcionarticulo' in mtd.columns and 'costerealtotal' in mtd.columns:
+        maq_grouped = mtd.groupby('descripcionarticulo').agg({'costerealtotal': 'sum', 'unidadesfabricadas': 'sum'}).reset_index()
+        maq_sorted = maq_grouped.sort_values(by='costerealtotal', ascending=False).head(5)
         for _, row in maq_sorted.iterrows():
-            top_maquinas.append({'maquina': row['descripcionmaquina'], 'unidades': float(row['unidadesfabricadas'])})
-    metrics['top_maquinas'] = top_maquinas
+            top_articulos.append({
+                'articulo': str(row['descripcionarticulo']),
+                'coste': float(row['costerealtotal']),
+                'unidades': float(row['unidadesfabricadas'])
+            })
+    metrics['top_articulos'] = top_articulos
 
     return metrics
 
@@ -1396,9 +1526,13 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                 <label class="upload-label">📁 Facturas</label>
                 <input type="file" name="facturas" accept=".xlsx,.xls">
               </div>
-              <div class="form-group">
+                            <div class="form-group">
                 <label class="upload-label">🏭 Producción</label>
                 <input type="file" name="produccion" accept=".xlsx,.xls">
+              </div>
+              <div class="form-group">
+                <label class="upload-label">📦 Stock</label>
+                <input type="file" name="stock" accept=".xlsx,.xls">
               </div>
             </div>
           </div>
@@ -1446,8 +1580,11 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         <div class="tab-content" id="cartera-comparativas">
           <section class="panel empty-state"><div class="empty-icon">💼</div><h2>Error al procesar</h2><p>Revisa los archivos subidos.</p></section>
         </div>
-        <div class="tab-content" id="produccion-dashboard">
+                <div class="tab-content" id="produccion-dashboard">
           <section class="panel empty-state"><div class="empty-icon">🏭</div><h2>Error al procesar</h2><p>Revisa los archivos subidos.</p></section>
+        </div>
+        <div class="tab-content" id="stock">
+          <section class="panel empty-state"><div class="empty-icon">📦</div><h2>Error al procesar</h2><p>Revisa los archivos subidos.</p></section>
         </div>
         {import_form_html}
         """
@@ -1713,50 +1850,81 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         """
         
         # Generar HTML para Producción
+
+        import html
+        stock_metrics = report.get('stock_comparison', [])
+        if stock_metrics:
+            stock_rows = "".join([f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".") for m in stock_metrics])
+            stock_table = f"<table><thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Material pedido</th><th class='text-right'>Stock envasado</th><th class='text-right'>Stock granel</th></tr></thead><tbody>{stock_rows}</tbody></table>"
+            
+            stock_html = f"""
+            <div class="tab-content" id="stock">
+              <section class="panel">
+                <h2>📦 Comparativa de Stock vs Pedidos/Ofertas</h2>
+                <p class="note" style="margin-bottom: 24px;">Análisis de material requerido frente al stock envasado y a granel disponible.</p>
+                {stock_table}
+              </section>
+            </div>
+            """
+        else:
+            stock_html = """
+            <div class="tab-content" id="stock">
+              <section class="panel empty-state"><div class="empty-icon">📦</div><h2>Sin datos de Stock</h2><p>Sube el archivo de Stock en Importación.</p></section>
+            </div>
+            """
+
         prod_metrics = report.get('produccion', {})
         if prod_metrics:
-            maq_rows = "".join([f"<tr><td>{html.escape(m['maquina'])}</td><td class='text-right'>{m['unidades']:,.0f}</td></tr>".replace(",", ".") for m in prod_metrics.get('top_maquinas', [])])
-            maq_table = f"<table><thead><tr><th>Máquina</th><th class='text-right'>Unidades</th></tr></thead><tbody>{maq_rows}</tbody></table>" if maq_rows else "<p class='note'>No hay datos.</p>"
+            art_rows = "".join([f"<tr><td>{html.escape(m['articulo'])}</td><td class='text-right'>{money(m['coste'])}</td><td class='text-right'>{m['unidades']:,.0f}</td></tr>".replace(",", ".") for m in prod_metrics.get('top_articulos', [])])
+            art_table = f"<table><thead><tr><th>Artículo</th><th class='text-right'>Coste</th><th class='text-right'>Unidades</th></tr></thead><tbody>{art_rows}</tbody></table>" if art_rows else "<p class='note'>No hay datos.</p>"
             
             evo_rows = "".join([f"<tr><td>{m['fecha']}</td><td class='text-right'>{m['unidades']:,.0f}</td></tr>".replace(",", ".") for m in prod_metrics.get('daily_evolution', [])])
             evo_table = f"<table><thead><tr><th>Fecha</th><th class='text-right'>Unidades</th></tr></thead><tbody>{evo_rows}</tbody></table>" if evo_rows else "<p class='note'>No hay datos.</p>"
 
-            total_tiempo = prod_metrics.get('mtd_tiempo_fab', 0) + prod_metrics.get('mtd_tiempo_prep', 0) + prod_metrics.get('mtd_tiempo_par', 0)
-            oee_pct = (prod_metrics.get('mtd_tiempo_fab', 0) / total_tiempo) * 100 if total_tiempo > 0 else 0.0
+            cost_dev = prod_metrics.get('coste_desviacion', 0)
+            dev_color = 'var(--success)' if cost_dev >= 0 else 'var(--danger)'
+            coste_unitario = prod_metrics.get('coste_unitario', 0)
+            coste_unitario_str = f"{coste_unitario:.2f} EUR".replace('.', ',')
 
             produccion_html = f"""
             <div class="tab-content" id="produccion-dashboard">
               <section class="panel">
                 <h2>🏭 Dashboard de Producción (MTD)</h2>
-                <div class="pdf-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div class="pdf-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
                   <div class="panel kpi-card" style="margin-bottom: 0;">
                     <h3>Volumen MTD</h3>
                     <div class="kpi-value">{prod_metrics.get('mtd_unidades', 0):,.0f}</div>
                     <div class="kpi-trend">Día Ant: {prod_metrics.get('daily_unidades', 0):,.0f}</div>
                   </div>
                   <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>Rechazos (Scrap)</h3>
-                    <div class="kpi-value">{prod_metrics.get('mtd_rechazos', 0):,.0f}</div>
-                  </div>
-                  <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>Tiempo Fabricación</h3>
-                    <div class="kpi-value">{prod_metrics.get('mtd_tiempo_fab', 0):,.1f}h</div>
-                  </div>
-                  <div class="panel kpi-card" style="margin-bottom: 0;">
                     <h3>OEE (Eficiencia)</h3>
-                    <div class="kpi-value">{oee_pct:.1f}%</div>
-                    <div class="kpi-trend">Paradas: {prod_metrics.get('mtd_tiempo_par', 0):.1f}h</div>
+                    <div class="kpi-value">{prod_metrics.get('oee', 0):.1f}%</div>
+                    <div class="kpi-trend">Teórico: {prod_metrics.get('mtd_tiempo_teorico', 0):.1f}h</div>
+                  </div>
+                  <div class="panel kpi-card" style="margin-bottom: 0;">
+                    <h3>Desviación Costes</h3>
+                    <div class="kpi-value" style="color: {dev_color};">{money(cost_dev)}</div>
+                    <div class="kpi-trend">Gasto Real: {money(prod_metrics.get('mtd_coste_real', 0))}</div>
+                  </div>
+                  <div class="panel kpi-card" style="margin-bottom: 0;">
+                    <h3>Tasa Rechazo (Scrap)</h3>
+                    <div class="kpi-value">{prod_metrics.get('scrap_rate', 0):.1f}%</div>
+                    <div class="kpi-trend">Unidades: {prod_metrics.get('mtd_rechazos', 0):,.0f}</div>
+                  </div>
+                  <div class="panel kpi-card" style="margin-bottom: 0;">
+                    <h3>Coste Medio/Ud</h3>
+                    <div class="kpi-value">{coste_unitario_str}</div>
                   </div>
                 </div>
               </section>
               <div class="pdf-grid-2" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 24px;">
                 <section class="panel" style="margin-bottom: 0;">
-                  <h2>Evolución Diaria</h2>
+                  <h2>Evolución Diaria (Volumen)</h2>
                   {evo_table}
                 </section>
                 <section class="panel" style="margin-bottom: 0;">
-                  <h2>Top Máquinas</h2>
-                  {maq_table}
+                  <h2>Top Artículos (por Coste Real)</h2>
+                  {art_table}
                 </section>
               </div>
             </div>
@@ -1836,7 +2004,8 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
             {product_table}
           </section>
         </div>
-        {produccion_html}
+                {produccion_html}
+        {stock_html}
         {import_form_html}
         """
     else:
@@ -1859,8 +2028,11 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         <div class="tab-content" id="cartera-comparativas">
           <section class="panel empty-state"><div class="empty-icon">💼</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
         </div>
-        <div class="tab-content" id="produccion-dashboard">
+                <div class="tab-content" id="produccion-dashboard">
           <section class="panel empty-state"><div class="empty-icon">🏭</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
+        </div>
+        <div class="tab-content" id="stock">
+          <section class="panel empty-state"><div class="empty-icon">📦</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
         </div>
         {import_form_html}
         """
@@ -2377,7 +2549,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     report_date = adjust_report_date(report_date)
                 files = {}
-                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion']:
+                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
                     file_item = form.get_file(key)
                     if file_item and file_item[0]:
                         files[key] = file_item[1]
