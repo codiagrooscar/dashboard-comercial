@@ -316,15 +316,6 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
         if 'documento' in df.columns:
             df = df[df['documento'].astype(str).str.strip() != '']
 
-        if kind == 'facturas' and 'cif' in df.columns and 'importe' in df.columns:
-            mask = df['cif'].astype(str).str.upper().str.startswith('ES')
-            df.loc[mask, 'importe'] = df.loc[mask, 'importe'] / 1.10
-        elif kind in ('albaranes', 'ofertas', 'pedidos') and 'serie' in df.columns:
-            mask = df['serie'].astype(str).str.strip() == ''
-            if 'importe' in df.columns:
-                df.loc[mask, 'importe'] = df.loc[mask, 'importe'] / 1.10
-            if kind == 'pedidos' and 'importe_pendiente' in df.columns:
-                df.loc[mask, 'importe_pendiente'] = df.loc[mask, 'importe_pendiente'] / 1.10
 
         return df
 def supabase_request_all(path: str, query_params: dict | None = None) -> list:
@@ -467,7 +458,20 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         out['unidades_pedidas'] = df[ordered_col] if ordered_col else 0.0
         out['unidades_servidas'] = df[served_col] if served_col else 0.0
         out['unidades_pendientes'] = df[pending_col] if df[pending_col] is not None else 0.0
+    # VAT Adjustment
+    if kind == 'facturas' and 'cif' in out.columns and 'importe' in out.columns:
+        out['importe'] = pd.to_numeric(out['importe'], errors='coerce').fillna(0.0)
+        mask = out['cif'].astype(str).str.upper().str.startswith('ES')
+        out.loc[mask, 'importe'] = out.loc[mask, 'importe'] / 1.10
+    elif kind in ('albaranes', 'ofertas', 'pedidos') and 'serie' in out.columns:
+        out['importe'] = pd.to_numeric(out['importe'], errors='coerce').fillna(0.0)
+        mask = out['serie'].astype(str).str.strip() == ''
+        out.loc[mask, 'importe'] = out.loc[mask, 'importe'] / 1.10
+        if kind == 'pedidos' and 'importe_pendiente' in out.columns:
+            out['importe_pendiente'] = pd.to_numeric(out['importe_pendiente'], errors='coerce').fillna(0.0)
+            out.loc[mask, 'importe_pendiente'] = out.loc[mask, 'importe_pendiente'] / 1.10
     return out
+
 def aggregate_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
     if kind in ('produccion', 'stock'):
         return df
