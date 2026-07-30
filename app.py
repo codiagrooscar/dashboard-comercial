@@ -97,7 +97,12 @@ def clean_df_for_json(df: pd.DataFrame, report_date: str) -> list[dict[str, Any]
     return records
 def save_data_to_supabase(report_date: str, dfs: dict[str, pd.DataFrame]) -> None:
     for name, df in dfs.items():
-        supabase_request(name, method='DELETE', query_params={'report_date': f'eq.{report_date}'})
+        try:
+            supabase_request(name, method='DELETE', query_params={'report_date': f'eq.{report_date}'})
+        except Exception as e:
+            print(f'Error al borrar {name} en Supabase: {e}')
+            if name == 'stock': continue # Skip saving if table doesn't exist
+            
         df_to_save = df.drop(columns=['id'], errors='ignore')
         
         if name == 'produccion':
@@ -116,7 +121,10 @@ def save_data_to_supabase(report_date: str, dfs: dict[str, pd.DataFrame]) -> Non
             batch_size = 500
             for i in range(0, len(records), batch_size):
                 batch = records[i:i + batch_size]
-                supabase_request(name, method='POST', data=batch)
+                try:
+                    supabase_request(name, method='POST', data=batch)
+                except Exception as e:
+                    print(f'Error al guardar {name} en Supabase: {e}')
 def local_data_path(report_date: str, name: str) -> Path:
     safe_date = re.sub('[^0-9-]', '', report_date)
     return LOCAL_DATA_DIR / safe_date / f'{name}.json'
@@ -331,7 +339,12 @@ def supabase_request_all(path: str, query_params: dict | None = None) -> list:
 def load_data_from_supabase(report_date: str) -> dict[str, pd.DataFrame] | None:
     dfs = {}
     for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
-        records = supabase_request_all(name, query_params={'report_date': f'eq.{report_date}', 'select': '*'})
+        try:
+            records = supabase_request_all(name, query_params={'report_date': f'eq.{report_date}', 'select': '*'})
+        except Exception as e:
+            print(f'Error cargando {name} de Supabase: {e}')
+            records = []
+            
         if not records:
             dfs[name] = pd.DataFrame()
         else:
