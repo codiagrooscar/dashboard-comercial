@@ -1864,7 +1864,6 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         
         # Generar HTML para Producción
 
-        import html
         stock_metrics = report.get('stock_comparison', [])
         if stock_metrics:
             stock_rows = "".join([f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".") for m in stock_metrics])
