@@ -266,7 +266,7 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             df['familia'] = pd.to_numeric(df['familia'], errors='coerce').fillna(0).astype(int)
             df['cantidad'] = pd.to_numeric(df['cantidad'], errors='coerce').fillna(0.0)
             
-        elif kind == 'produccion':
+        elif kind in ('produccion', 'stock'):
             # Normalizar nombres de columnas si vienen con tildes o espacios
             col_map = {}
             for col in df.columns:
@@ -409,7 +409,7 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
                 number_cols = [ds.col('EjercicioAlbaran'), ds.col('SerieAlbaran'), ds.col('NumeroAlbaran')]
                 pending_amount_col = needed_date_col = None
                 ordered_col = served_col = pending_col = None
-            elif kind == 'produccion':
+            elif kind in ('produccion', 'stock'):
                 return ds.df
             else:
                 date_col = ds.require_date('Fecha factura', 'FechaFactura')
