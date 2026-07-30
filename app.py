@@ -1187,8 +1187,8 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     pedidos = docs['pedidos']
     albaranes = docs['albaranes']
     facturas = docs['facturas']
-    today = {name: frame[frame['fecha'] == current] for name, frame in docs.items()}
-    month = {name: frame[is_same_month(frame['fecha'], current)] for name, frame in docs.items()}
+    today = {name: frame[frame['fecha'] == current] for name, frame in docs.items() if 'fecha' in frame.columns}
+    month = {name: frame[is_same_month(frame['fecha'], current)] for name, frame in docs.items() if 'fecha' in frame.columns}
     month_offers = month['ofertas'].copy()
     month_orders = month['pedidos'].copy()
     pending_albaranes = pending_delivery_notes_for_invoice(albaranes, facturas, current)
