@@ -459,7 +459,7 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         out['unidades_pendientes'] = df[pending_col] if df[pending_col] is not None else 0.0
     return out
 def aggregate_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
-    if kind == 'produccion':
+    if kind in ('produccion', 'stock'):
         return df
     if df.empty:
         return pd.DataFrame(columns=['documento', 'fecha', 'fecha_necesaria', 'importe', 'importe_pendiente', 'cliente', 'razon_social', 'serie', 'zona', 'articulos', 'unidades_pedidas', 'unidades_servidas', 'unidades_pendientes', 'lineas', 'articulos_list', 'cif'])
