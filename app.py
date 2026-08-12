@@ -2595,6 +2595,9 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     if fam_name == g['base_code'] and len(g['items']) > 0:
                         fam_name = g['items'][0]['desc'].split(',')[0].strip()
                         
+                    import re
+                    fam_name = re.sub(r'(?i)\b(?:GRANEL|BASE)\b', '', fam_name).strip()
+                        
                     f = g['formats']
                     def fmt(v): return f"{v:,.0f}".replace(',', '.') if v > 0 else "-"
                     
