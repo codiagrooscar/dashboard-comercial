@@ -22,6 +22,17 @@ from pathlib import Path
 from excel_report import generate_excel_dashboard
 from typing import Any
 import pandas as pd
+
+RATES_PLANTA = {
+    'FABRICAR': {'Líquidos': 1875.0, 'Sólidos': 500.0, 'Flows': 687.5, 'Otros': 600.0},
+    'ENVASAR': {
+        'Líquidos': {'1000': 2500.0, '200': 1250.0, '20': 800.0, '5': 350.0, '1': 125.0, 'default': 800.0},
+        'Sólidos': {'BIG BAG': 300.0, '500': 30.0, '20': 200.0, '5': 150.0, '1': 60.0, 'default': 150.0},
+        'Flows': {'20': 850.0, '5': 375.0, '1': 100.0, 'default': 500.0},
+        'Otros': {'default': 500.0}
+    }
+}
+
 PORT = int(os.environ.get('PORT', '8765'))
 BASE_DIR = Path(__file__).resolve().parent
 logo_txt_path = BASE_DIR / 'codiagro_logo_b64.txt'
@@ -111,7 +122,8 @@ def save_data_to_supabase(report_date: str, dfs: dict[str, pd.DataFrame]) -> Non
                 'unidadesafabricar', 'unidadesfabricadas', 'unidadesrechazadas',
                 'tiempototal', 'tiemporealtotal', 'tiempofabricacion', 'tiempopreparacion', 'tiempoparadas',
                 'costetotal', 'costerealtotal', 'costerealmaquina', 'costerealmanoobra',
-                'descripcionmaquina'
+                'descripcionmaquina',
+                'codigo', 'descripcion', 'udsafabricar', 'udsfabricadas', 'tiempotot', 'costereal'
             ]
             cols_to_keep = [c for c in allowed_cols if c in df_to_save.columns]
             df_to_save = df_to_save[cols_to_keep]
@@ -154,17 +166,23 @@ def save_report_data(report_date: str, dfs: dict[str, pd.DataFrame]) -> None:
     if SUPABASE_ENABLED:
         save_data_to_supabase(report_date, dfs)
 def load_report_data(report_date: str, fallback: bool = True) -> dict[str, pd.DataFrame] | None:
-    dfs = None
+    dfs = load_data_from_local(report_date)
+    if dfs is None:
+        dfs = {}
+        
     if SUPABASE_ENABLED:
         try:
-            dfs = load_data_from_supabase(report_date)
-            if dfs is not None:
+            supa_dfs = load_data_from_supabase(report_date)
+            if supa_dfs is not None:
+                for k, v in supa_dfs.items():
+                    if not v.empty or k not in dfs:
+                        dfs[k] = v
                 save_data_to_local(report_date, dfs)
         except Exception as exc:
             print(f'No se pudo cargar desde Supabase: {exc}')
             
-    if dfs is None:
-        dfs = load_data_from_local(report_date)
+    if not dfs:
+        dfs = None
         
     if dfs is None and fallback:
         # Fallback a la foto más reciente disponible
@@ -251,49 +269,125 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
                 df['unidades_servidas'] = pd.to_numeric(df.get('unidades_servidas'), errors='coerce').fillna(0.0)
                 df['unidades_pendientes'] = pd.to_numeric(df.get('unidades_pendientes'), errors='coerce').fillna(0.0)
         elif kind == 'stock':
-            col_map = {}
-            for col in df.columns:
-                norm_col = col.lower().strip().replace('ó', 'o').replace('í', 'i')
-                col_map[col] = norm_col
-            df = df.rename(columns=col_map)
+            first_row = pd.DataFrame([df.columns.values], columns=df.columns)
+            df = pd.concat([first_row, df], ignore_index=True)
+            
+            header_row_idx = None
+            for i, row in df.head(10).iterrows():
+                row_strs = [str(x).upper() for x in row.values]
+                matches = sum(1 for req in ['CODIGO', 'FAMILIA', 'CANTIDAD'] if any(req in r for r in row_strs))
+                if matches >= 2:
+                    header_row_idx = i
+                    break
+            
+            if header_row_idx is not None:
+                new_cols = df.iloc[header_row_idx].values
+                df.columns = new_cols
+                df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+                
+                col_map = {}
+                for col in df.columns:
+                    norm_col = str(col).lower().strip().replace('ó', 'o').replace('í', 'i')
+                    col_map[col] = norm_col
+                df = df.rename(columns=col_map)
+                
+                if 'codigo' in df.columns and 'descripcion' in df.columns and 'familia' in df.columns:
+                    first_codigo = str(df['codigo'].dropna().iloc[0]).strip() if not df['codigo'].dropna().empty else ''
+                    first_familia = str(df['familia'].dropna().iloc[0]).strip() if not df['familia'].dropna().empty else ''
+                    if first_codigo.isdigit() and not first_familia.isdigit():
+                        df['familia_real'] = df['codigo']
+                        df['codigo_real'] = df['descripcion']
+                        df['descripcion_real'] = df['familia']
+                        
+                        df['familia'] = df['familia_real']
+                        df['codigo'] = df['codigo_real']
+                        df['descripcion'] = df['descripcion_real']
+                        
+                        df = df.drop(columns=['familia_real', 'codigo_real', 'descripcion_real'])
+            else:
+                if len(df.columns) >= 5:
+                    df.columns = ['fecha', 'familia', 'codigo', 'descripcion', 'cantidad'] + list(df.columns[5:])
+                elif len(df.columns) == 4:
+                    df.columns = ['codigo', 'descripcion', 'familia', 'cantidad']
             
             for req in ['codigo', 'descripcion', 'familia', 'cantidad']:
                 if req not in df.columns:
                     df[req] = '' if req != 'cantidad' else 0.0
+            
+            if 'fecha' not in df.columns:
+                df['fecha'] = pd.NaT
+            else:
+                df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
             
             df['codigo'] = df['codigo'].fillna('').astype(str).str.strip()
             df['descripcion'] = df['descripcion'].fillna('').astype(str).str.strip()
             df['familia'] = pd.to_numeric(df['familia'], errors='coerce').fillna(0).astype(int)
             df['cantidad'] = pd.to_numeric(df['cantidad'], errors='coerce').fillna(0.0)
             
-        elif kind in ('produccion', 'stock'):
+        elif kind == 'produccion':
+            # Detectar fila de cabecera si hay filas en blanco al principio (ej: exportaciones de ERP)
+            first_row = pd.DataFrame([df.columns.values], columns=df.columns)
+            df = pd.concat([first_row, df], ignore_index=True)
+            
+            header_row_idx = None
+            for i, row in df.head(10).iterrows():
+                row_strs = [str(x).upper() for x in row.values]
+                matches = sum(1 for req in ['CODIGO', 'FECHA', 'FABRICADAS', 'FABRICAR', 'DESCRIPCION'] if any(req in r for r in row_strs))
+                if matches >= 2:
+                    header_row_idx = i
+                    break
+            
+            if header_row_idx is not None:
+                new_cols = df.iloc[header_row_idx].values
+                df.columns = new_cols
+                df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+
             # Normalizar nombres de columnas si vienen con tildes o espacios
             col_map = {}
             for col in df.columns:
-                norm_col = col.lower().replace(' ', '').replace('_', '').replace('.', '')
+                norm_col = str(col).lower().replace(' ', '').replace('_', '').replace('.', '')
                 col_map[col] = norm_col
             df = df.rename(columns=col_map)
             
             if 'descripcionarticulo1' in df.columns and 'descripcionarticulo' not in df.columns:
                 df['descripcionarticulo'] = df['descripcionarticulo1']
                 
-            # Arreglar columnas duplicadas en Excel (e.g. UnidadesFabricadas.1)
             if 'unidadesfabricadas1' in df.columns:
                 df['unidadesfabricadas'] = df['unidadesfabricadas1']
             if 'unidadesrechazadas1' in df.columns:
                 df['unidadesrechazadas'] = df['unidadesrechazadas1']
                 
+            # Mapeo de nuevas columnas del usuario a las estandar
+            mapping = {
+                'udsfabricadas': 'unidadesfabricadas',
+                'udsafabricar': 'unidadesafabricar',
+                'tiempototal': 'tiemporealtotal',
+                'costereal': 'costerealtotal',
+                'codigo': 'codigoarticulo',
+                'descripcion': 'descripcionarticulo'
+            }
+            for k, v in mapping.items():
+                if k in df.columns and v not in df.columns:
+                    df[v] = df[k]
+                
             if 'fechafinalreal' in df.columns:
-                df['fecha'] = pd.to_datetime(df['fechafinalreal'], errors='coerce')
+                df['fecha'] = pd.to_datetime(df['fechafinalreal'], errors='coerce', dayfirst=True)
             elif 'fechainicioreal' in df.columns:
-                df['fecha'] = pd.to_datetime(df['fechainicioreal'], errors='coerce')
+                df['fecha'] = pd.to_datetime(df['fechainicioreal'], errors='coerce', dayfirst=True)
             elif 'fechainicio' in df.columns:
-                df['fecha'] = pd.to_datetime(df['fechainicio'], errors='coerce')
+                df['fecha'] = pd.to_datetime(df['fechainicio'], errors='coerce', dayfirst=True)
             else:
                 if 'fecha' not in df.columns:
                     df['fecha'] = pd.NaT # Fallback
                 else:
-                    df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
+                    s_str = df['fecha'].astype(str).str.strip()
+                    def safe_parse(s):
+                        if pd.isna(s): return pd.NaT
+                        if re.match(r'^\d{4}-\d{2}-\d{2}', str(s)):
+                            return pd.to_datetime(s, errors='coerce')
+                        return pd.to_datetime(s, errors='coerce', dayfirst=True)
+                    df['fecha'] = s_str.apply(safe_parse)
+
             
             # Asegurar columnas numéricas
             numeric_cols = [
@@ -301,9 +395,25 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
                 'tiempototal', 'tiemporealtotal', 'tiempofabricacion', 'tiempopreparacion', 'tiempoparadas',
                 'costetotal', 'costerealtotal', 'costerealmaquina', 'costerealmanoobra'
             ]
+            
+            def clean_num(x):
+                if pd.isna(x): return x
+                x = str(x).strip()
+                if '.' in x and ',' in x:
+                    if x.rfind(',') > x.rfind('.'):
+                        return x.replace('.', '').replace(',', '.')
+                    else:
+                        return x.replace(',', '')
+                elif ',' in x:
+                    return x.replace(',', '.')
+                return x
+
             for c in numeric_cols:
                 if c in df.columns:
-                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+                    s = df[c]
+                    if s.dtype == object:
+                        s = s.apply(clean_num)
+                    df[c] = pd.to_numeric(s, errors='coerce').fillna(0.0)
             
             # Limpiar strings
             for c in ['idot', 'codigoarticulo', 'descripcionarticulo']:
@@ -1131,7 +1241,15 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         return {}
 
     # Filtrar mes actual (MTD)
-    mtd = prod[is_same_month(prod['fecha'], current)].copy() if 'fecha' in prod.columns else pd.DataFrame()
+    if 'fecha' in prod.columns and not prod.empty:
+        mtd = prod[is_same_month(prod['fecha'], current)].copy()
+        if mtd.empty:
+            max_date = pd.to_datetime(prod['fecha']).max()
+            if not pd.isna(max_date):
+                current = pd.Timestamp(max_date)
+                mtd = prod[is_same_month(prod['fecha'], current)].copy()
+    else:
+        mtd = pd.DataFrame()
     
     # Filtrar dia anterior
     prev_day = current - pd.Timedelta(days=1)
@@ -1141,14 +1259,45 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     prev_date = get_same_day_prev_month(current)
     pmtd = prod[is_same_month(prod['fecha'], prev_date) & (prod['fecha'] <= prev_date)].copy() if not mtd.empty else pd.DataFrame()
 
+    # Calculate theoretical time for MTD
+    mtd_tiempo_teorico = 0.0
+    if not mtd.empty and 'unidadesfabricadas' in mtd.columns and 'descripcionarticulo' in mtd.columns:
+        import re
+        for _, row in mtd.iterrows():
+            desc = str(row.get('descripcionarticulo', '')).upper()
+            uds = float(row.get('unidadesfabricadas', 0))
+            if uds <= 0: continue
+            
+            tipo = 'Otros'
+            if re.search(r'\d+\s*(L|ML|LITRO|LITROS)\b', desc):
+                tipo = 'Líquidos'
+            elif re.search(r'\d+\s*(KG|G|KILO|KILOS|GRAMO|GRAMOS)\b', desc):
+                tipo = 'Sólidos'
+            
+            rate_fab = RATES_PLANTA['FABRICAR'].get(tipo, 600.0)
+            t_fab = uds / rate_fab if rate_fab > 0 else 0
+            
+            env_rates = RATES_PLANTA['ENVASAR'].get(tipo, RATES_PLANTA['ENVASAR']['Otros'])
+            rate_env = env_rates['default']
+            if tipo in ['Líquidos', 'Flows']:
+                match = re.search(r'\b(1000|200|20|5|1)\s*(L|ML|LITRO|LITROS)\b', desc)
+                if match: rate_env = env_rates.get(match.group(1), env_rates['default'])
+            elif tipo == 'Sólidos':
+                if 'BIG BAG' in desc: rate_env = env_rates['BIG BAG']
+                else:
+                    match = re.search(r'\b(500|20|5|1)\s*(KG|G|KILO|KILOS|GRAMO|GRAMOS)\b', desc)
+                    if match: rate_env = env_rates.get(match.group(1), env_rates['default'])
+                    
+            t_env = uds / rate_env if rate_env > 0 else 0
+            mtd_tiempo_teorico += (t_fab + t_env + 1.0)
+
     metrics = {
         'mtd_unidades': float(mtd['unidadesfabricadas'].sum()) if not mtd.empty and 'unidadesfabricadas' in mtd.columns else 0.0,
-        'mtd_rechazos': float(mtd['unidadesrechazadas'].sum()) if not mtd.empty and 'unidadesrechazadas' in mtd.columns else 0.0,
+        'mtd_uds_a_fabricar': float(mtd['unidadesafabricar'].sum()) if not mtd.empty and 'unidadesafabricar' in mtd.columns else 0.0,
         # Los tiempos en Excel vienen como fracción de día. Multiplicamos por 24 para pasarlos a horas.
         'mtd_tiempo_real': float(mtd['tiemporealtotal'].sum()) * 24 if not mtd.empty and 'tiemporealtotal' in mtd.columns else 0.0,
-        'mtd_tiempo_teorico': float(mtd['tiempototal'].sum()) * 24 if not mtd.empty and 'tiempototal' in mtd.columns else 0.0,
+        'mtd_tiempo_teorico': mtd_tiempo_teorico,
         'mtd_coste_real': float(mtd['costerealtotal'].sum()) if not mtd.empty and 'costerealtotal' in mtd.columns else 0.0,
-        'mtd_coste_teorico': float(mtd['costetotal'].sum()) if not mtd.empty and 'costetotal' in mtd.columns else 0.0,
         
         'daily_unidades': float(daily['unidadesfabricadas'].sum()) if not daily.empty and 'unidadesfabricadas' in daily.columns else 0.0,
         'pmtd_unidades': float(pmtd['unidadesfabricadas'].sum()) if not pmtd.empty and 'unidadesfabricadas' in pmtd.columns else 0.0,
@@ -1156,30 +1305,118 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
 
     # Calculos derivados
     metrics['oee'] = (metrics['mtd_tiempo_teorico'] / metrics['mtd_tiempo_real']) * 100 if metrics['mtd_tiempo_real'] > 0 else 0.0
-    metrics['scrap_rate'] = (metrics['mtd_rechazos'] / (metrics['mtd_unidades'] + metrics['mtd_rechazos'])) * 100 if (metrics['mtd_unidades'] + metrics['mtd_rechazos']) > 0 else 0.0
-    metrics['coste_desviacion'] = metrics['mtd_coste_teorico'] - metrics['mtd_coste_real'] # Positivo = Ahorro, Negativo = Sobrecoste
+    metrics['adherencia'] = (metrics['mtd_unidades'] / metrics['mtd_uds_a_fabricar']) * 100 if metrics['mtd_uds_a_fabricar'] > 0 else 0.0
     metrics['coste_unitario'] = metrics['mtd_coste_real'] / metrics['mtd_unidades'] if metrics['mtd_unidades'] > 0 else 0.0
 
     # Evolucion diaria MTD
     daily_evolution = []
+    import calendar
+    _, last_day = calendar.monthrange(current.year, current.month)
+    start_of_month = current.replace(day=1)
+    end_of_month = current.replace(day=last_day)
+    all_days = pd.date_range(start=start_of_month, end=end_of_month, freq='D')
+    
+    daily_unidades_map = {}
     if not mtd.empty and 'unidadesfabricadas' in mtd.columns:
         grouped = mtd.groupby(mtd['fecha'].dt.date)['unidadesfabricadas'].sum().reset_index()
         for _, row in grouped.iterrows():
-            daily_evolution.append({'fecha': row['fecha'].strftime('%Y-%m-%d'), 'unidades': float(row['unidadesfabricadas'])})
-    metrics['daily_evolution'] = sorted(daily_evolution, key=lambda x: x['fecha'])
+            daily_unidades_map[row['fecha'].strftime('%Y-%m-%d')] = float(row['unidadesfabricadas'])
+            
+    for day in all_days:
+        day_str = day.strftime('%Y-%m-%d')
+        daily_evolution.append({
+            'fecha': day_str,
+            'unidades': daily_unidades_map.get(day_str, 0.0)
+        })
+    metrics['daily_evolution'] = daily_evolution
     
-    # Top articulos (por coste real)
-    top_articulos = []
+    # Produccion mensual (desde enero del año en curso)
+    monthly_evolution = [{'mes': m, 'Líquidos': 0, 'Sólidos': 0, 'Flows': 0, 'SAS': 0, 'total': 0} for m in range(1, 13)]
+    
+    if not prod.empty and 'unidadesfabricadas' in prod.columns and 'fecha' in prod.columns and 'costerealtotal' in prod.columns:
+        current_year = current.year
+        ytd = prod[prod['fecha'].dt.year == current_year].copy()
+        if not ytd.empty:
+            if 'familia' not in ytd.columns:
+                if 'codigofamilia' in ytd.columns:
+                    ytd['familia'] = ytd['codigofamilia']
+                else:
+                    ytd['familia'] = '0'
+            
+            def get_fam_type(f):
+                f = str(f).strip()
+                if f.endswith('.0'): f = f[:-2]
+                if f in ['40', '41']: return 'Líquidos'
+                elif f in ['38', '42']: return 'Sólidos'
+                elif f in ['39', '43']: return 'Flows'
+                elif f in ['45', '46']: return 'SAS'
+                else: return 'Otros'
+                
+            ytd['tipo_fam'] = ytd['familia'].apply(get_fam_type)
+            
+            grouped_month = ytd.groupby([ytd['fecha'].dt.month, 'tipo_fam'])['unidadesfabricadas'].sum().reset_index()
+            for _, row in grouped_month.iterrows():
+                m = int(row['fecha'])
+                t = row['tipo_fam']
+                u = float(row['unidadesfabricadas'])
+                if 1 <= m <= 12:
+                    if t in monthly_evolution[m-1]:
+                        monthly_evolution[m-1][t] += u
+                        monthly_evolution[m-1]['total'] += u
+                
+    metrics['monthly_evolution'] = monthly_evolution
+    
+    top_articulos_unidades = []
+    top_articulos_coste = []
+    metrics['eficiencia_oee'] = 0.0
+
     if not mtd.empty and 'descripcionarticulo' in mtd.columns and 'costerealtotal' in mtd.columns:
-        maq_grouped = mtd.groupby('descripcionarticulo').agg({'costerealtotal': 'sum', 'unidadesfabricadas': 'sum'}).reset_index()
-        maq_sorted = maq_grouped.sort_values(by='costerealtotal', ascending=False).head(5)
-        for _, row in maq_sorted.iterrows():
-            top_articulos.append({
+        def get_fam_type_for_rates(f):
+            f = str(f).strip()
+            if f.endswith('.0'): f = f[:-2]
+            if f in ['40', '41']: return 'Líquidos'
+            elif f in ['38', '42']: return 'Sólidos'
+            elif f in ['39', '43']: return 'Flows'
+            elif f in ['45', '46']: return 'SAS'
+            else: return 'Otros'
+        
+        def calculate_hours(row):
+            t = get_fam_type_for_rates(row.get('codigofamilia', '0'))
+            if t == 'Líquidos': pr, er = 6000.0, 1500.0
+            elif t == 'Sólidos': pr, er = 1500.0, 600.0
+            elif t == 'Flows': pr, er = 1000.0, 800.0
+            elif t == 'SAS': pr, er = 3000.0, 1000.0
+            else: pr, er = 2000.0, 1000.0
+            u = float(row.get('unidadesfabricadas', 0))
+            return (u / pr) + (u / er) if u > 0 else 0
+
+        mtd_copy = mtd.copy()
+        mtd_copy['horas_teoricas'] = mtd_copy.apply(calculate_hours, axis=1)
+        
+        horas_teoricas_totales = mtd_copy['horas_teoricas'].sum()
+        horas_reales_totales = mtd_copy['tiemporealtotal'].sum() if 'tiemporealtotal' in mtd_copy.columns else 0
+        metrics['eficiencia_oee'] = (horas_teoricas_totales / horas_reales_totales * 100) if horas_reales_totales > 0 else 0.0
+
+        maq_grouped = mtd_copy.groupby('descripcionarticulo').agg({'costerealtotal': 'sum', 'unidadesfabricadas': 'sum'}).reset_index()
+        
+        maq_sorted_unidades = maq_grouped.sort_values(by='unidadesfabricadas', ascending=False).head(5)
+        for _, row in maq_sorted_unidades.iterrows():
+            top_articulos_unidades.append({
+                'articulo': str(row['descripcionarticulo']),
+                'unidades': float(row['unidadesfabricadas'])
+            })
+            
+        maq_grouped['coste_unitario'] = maq_grouped.apply(lambda row: row['costerealtotal'] / row['unidadesfabricadas'] if row['unidadesfabricadas'] > 0 else 0, axis=1)
+        maq_sorted_coste = maq_grouped.sort_values(by='coste_unitario', ascending=False).head(5)
+        for _, row in maq_sorted_coste.iterrows():
+            top_articulos_coste.append({
                 'articulo': str(row['descripcionarticulo']),
                 'coste': float(row['costerealtotal']),
                 'unidades': float(row['unidadesfabricadas'])
             })
-    metrics['top_articulos'] = top_articulos
+            
+    metrics['top_articulos_unidades'] = top_articulos_unidades
+    metrics['top_articulos_coste'] = top_articulos_coste
 
     return metrics
 
@@ -1276,7 +1513,220 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     month_pedidos_split = calc_split(month['pedidos'], 'importe_pendiente')
     ofertas_aprobadas_split = calc_split(approved_offers, 'importe')
 
+    stock_comparison = []
+    pendientes_por_articulo = {}
+    processed_codigos = set()
+    pedidos_df = dfs.get('pedidos', pd.DataFrame())
+    
+    if not pedidos_df.empty and 'articulo' in pedidos_df.columns:
+        pendientes_por_articulo = pedidos_df.groupby('articulo')['unidades_pendientes'].sum().to_dict()
+
+    if 'stock' in dfs and not dfs['stock'].empty:
+        stock_df = dfs['stock']
+        for _, row in stock_df.iterrows():
+            codigo = str(row.get('codigo', ''))
+            familia = str(row.get('familia', '')).strip()
+            if familia.endswith('.0'): familia = familia[:-2]
+            cantidad = float(row.get('cantidad', 0) or 0)
+            pedido_cant = float(pendientes_por_articulo.get(codigo, 0))
+            
+            envasado = cantidad if familia in ['41', '42', '43', '46'] else 0.0
+            granel = cantidad if familia in ['38', '39', '40', '45'] else 0.0
+            
+            if familia in ['38', '42']:
+                tipo = 'Sólidos'
+            elif familia in ['40', '41']:
+                tipo = 'Líquidos'
+            elif familia in ['39', '43']:
+                tipo = 'Flows'
+            elif familia in ['45', '46']:
+                tipo = 'SAS'
+            else:
+                tipo = 'Otros'
+            
+            if pedido_cant == 0 and envasado == 0 and granel == 0:
+                processed_codigos.add(codigo)
+                continue
+                
+            stock_comparison.append({
+                'codigo': codigo,
+                'descripcion': str(row.get('descripcion', '')),
+                'pedido': pedido_cant,
+                'stock_envasado': envasado,
+                'stock_granel': granel,
+                'tipo': tipo
+            })
+            processed_codigos.add(codigo)
+
+    for codigo, cant in pendientes_por_articulo.items():
+        if codigo not in processed_codigos and cant > 0:
+            match = pedidos_df[pedidos_df['articulo'] == codigo]
+            desc = str(match['descripcion'].iloc[0]).strip() if not match.empty else ''
+            
+            tipo = 'Otros'
+            if desc:
+                desc_upper = desc.upper()
+                import re
+                if re.search(r'\d+\s*(L|ML|LITRO|LITROS)\b', desc_upper):
+                    tipo = 'Líquidos'
+                elif re.search(r'\d+\s*(KG|G|KILO|KILOS|GRAMO|GRAMOS)\b', desc_upper):
+                    tipo = 'Sólidos'
+            
+            stock_comparison.append({
+                'codigo': codigo,
+                'descripcion': desc or 'N/D',
+                'pedido': cant,
+                'stock_envasado': 0.0,
+                'stock_granel': 0.0,
+                'tipo': tipo
+            })
+
+    stock_comparison.sort(key=lambda x: x['pedido'], reverse=True)
+
+    tiempos = {'Líquidos': {'fab': 0.0, 'env': 0.0, 'cambios': 0, 'idle': 0.0, 'total_hours': 0.0}, 'Sólidos': {'fab': 0.0, 'env': 0.0, 'cambios': 0, 'idle': 0.0, 'total_hours': 0.0}, 'Flows': {'fab': 0.0, 'env': 0.0, 'cambios': 0, 'idle': 0.0, 'total_hours': 0.0}, 'SAS': {'fab': 0.0, 'env': 0.0, 'cambios': 0, 'idle': 0.0, 'total_hours': 0.0}, 'Otros': {'fab': 0.0, 'env': 0.0, 'cambios': 0, 'idle': 0.0, 'total_hours': 0.0}}
+    for m in stock_comparison:
+        nec = max(0, m['pedido'] - m['stock_envasado'] - m['stock_granel'])
+        if nec <= 0: continue
+        tipo = m.get('tipo', 'Otros')
+        desc = str(m.get('descripcion', '')).upper()
+        rate_fab = RATES_PLANTA['FABRICAR'].get(tipo, 600.0)
+        
+        env_rates = RATES_PLANTA['ENVASAR'].get(tipo, RATES_PLANTA['ENVASAR']['Otros'])
+        rate_env = env_rates['default']
+        if tipo in ['Líquidos', 'Flows']:
+            import re
+            match = re.search(r'\b(1000|200|20|5|1)\s*(L|ML|LITRO|LITROS)\b', desc)
+            if match: rate_env = env_rates.get(match.group(1), env_rates['default'])
+        elif tipo == 'Sólidos':
+            if 'BIG BAG' in desc: rate_env = env_rates['BIG BAG']
+            else:
+                import re
+                match = re.search(r'\b(500|20|5|1)\s*(KG|G|KILO|KILOS|GRAMO|GRAMOS)\b', desc)
+                if match: rate_env = env_rates.get(match.group(1), env_rates['default'])
+                
+        t_fab = nec / rate_fab if rate_fab > 0 else 0
+        t_env = nec / rate_env if rate_env > 0 else 0
+        t_cambio = 1
+        pt = t_fab + t_env + t_cambio
+        
+        current_day_hours = tiempos[tipo]['total_hours'] % 16
+        if current_day_hours > 0 and (current_day_hours + pt > 16):
+            padding = 16 - current_day_hours
+            tiempos[tipo]['idle'] += padding
+            tiempos[tipo]['total_hours'] += padding
+            
+        tiempos[tipo]['fab'] += t_fab
+        tiempos[tipo]['env'] += t_env
+        tiempos[tipo]['cambios'] += t_cambio
+        tiempos[tipo]['total_hours'] += pt
+
+    stock_insights = {'rotura': [], 'obsoleto_capital': 0.0, 'total_capital': 0.0, 'obsoleto_items': [], 'capital_groups': {}}
+    if 'stock' in dfs and not dfs['stock'].empty and not pedidos_df.empty and 'articulo' in pedidos_df.columns:
+        pedidos_por_articulo = pedidos_df.groupby('articulo')['unidades_pedidas'].sum().to_dict() if 'unidades_pedidas' in pedidos_df.columns else {}
+        months_passed = max(1, current.month)
+        
+        precios_por_desc = {}
+        for _, row in dfs['stock'].iterrows():
+            p = row.get('precio', row.get('PRECIO', 0))
+            if pd.notna(p):
+                try:
+                    p_val = float(str(p).replace(',', '.'))
+                    if p_val > 0:
+                        precios_por_desc[str(row.get('descripcion', '')).strip().upper()] = p_val
+                except:
+                    pass
+                    
+        def find_fallback_price(desc):
+            desc = desc.strip().upper()
+            if desc in precios_por_desc: return precios_por_desc[desc]
+            best_price = 0.0
+            best_match_len = 0
+            for k, v in precios_por_desc.items():
+                if len(k) > 4 and (k in desc or desc in k):
+                    if len(k) > best_match_len:
+                        best_price = v
+                        best_match_len = len(k)
+            return best_price
+
+        for _, row in dfs['stock'].iterrows():
+            codigo = str(row.get('codigo', ''))
+            desc = str(row.get('descripcion', ''))
+            cantidad = float(row.get('cantidad', 0) or 0)
+            if cantidad <= 0: continue
+            
+            avg_monthly = pedidos_por_articulo.get(codigo, 0) / months_passed
+            coverage_days = (cantidad / avg_monthly) * 30 if avg_monthly > 0 else float('inf')
+            
+            if coverage_days < 15:
+                stock_insights['rotura'].append({
+                    'articulo': desc,
+                    'cobertura': coverage_days,
+                    'stock': cantidad,
+                    'consumo_medio': avg_monthly
+                })
+                
+            p = row.get('precio', row.get('PRECIO', 0))
+            p_val = 0.0
+            if pd.notna(p):
+                try: p_val = float(str(p).replace(',', '.'))
+                except: pass
+            if p_val == 0.0:
+                p_val = find_fallback_price(desc)
+                
+            valor = cantidad * p_val
+            stock_insights['total_capital'] += valor
+            
+            # Exclude bulk/graneles from obsolete stock
+            familia_str = str(row.get('familia', '0')).strip()
+            if familia_str.endswith('.0'): familia_str = familia_str[:-2]
+            is_granel = familia_str in ['38', '39', '40']
+            
+            if avg_monthly == 0 and not is_granel:
+                stock_insights['obsoleto_capital'] += valor
+                stock_insights['obsoleto_items'].append({'articulo': desc, 'valor': valor})
+                
+            # Group for Capital Inmovilizado Top 5
+            c = str(codigo).strip()
+            import re
+            
+            if re.search(r'\d{4}$', c):
+                base_c = c[:-4]
+            else:
+                match_granel_00 = re.search(r'([A-Za-z]+)00$', c)
+                if match_granel_00:
+                    base_c = match_granel_00.group(1)
+                else:
+                    base_c = c
+            
+            if base_c not in stock_insights['capital_groups']:
+                stock_insights['capital_groups'][base_c] = {
+                    'base_code': base_c,
+                    'items': [],
+                    'total_cant': 0,
+                    'total_valor': 0,
+                    'formats': {'granel': 0, '1L': 0, '5L': 0, '20L': 0, '200L': 0, '1000L': 0}
+                }
+            stock_insights['capital_groups'][base_c]['items'].append({'codigo': c, 'desc': desc, 'cant': cantidad, 'valor': valor})
+            stock_insights['capital_groups'][base_c]['total_cant'] += cantidad
+            stock_insights['capital_groups'][base_c]['total_valor'] += valor
+            
+            if re.search(r'0001$', c): stock_insights['capital_groups'][base_c]['formats']['1L'] += cantidad
+            elif re.search(r'0005$', c): stock_insights['capital_groups'][base_c]['formats']['5L'] += cantidad
+            elif re.search(r'0020$', c): stock_insights['capital_groups'][base_c]['formats']['20L'] += cantidad
+            elif re.search(r'0200$', c): stock_insights['capital_groups'][base_c]['formats']['200L'] += cantidad
+            elif re.search(r'1000$', c): stock_insights['capital_groups'][base_c]['formats']['1000L'] += cantidad
+            else: stock_insights['capital_groups'][base_c]['formats']['granel'] += cantidad
+                
+        stock_insights['rotura'].sort(key=lambda x: x['cobertura'])
+        stock_insights['obsoleto_items'].sort(key=lambda x: x['valor'], reverse=True)
+
+    tiempos[tipo]['cambios'] += t_cambio
+    tiempos[tipo]['total_hours'] += pt
+
     return {
+        "stock_comparison": stock_comparison,
+        "stock_insights": stock_insights,
+        "tiempos_estimados": tiempos,
         "current": current,
         "month_invoiced": month_invoiced,
         "forecast_total": forecast_total,
@@ -1448,15 +1898,81 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
             by_date.setdefault(date, {'pedidos': 0.0, 'facturas': 0.0})
             by_date[date][name] = float(item['importe'])
     if not by_date:
-        return '<p class=\'note\'>No hay datos del mes para dibujar tendencia.</p>'
+        return "<p class='note'>No hay datos del mes para dibujar tendencia.</p>"
     else:
-        max_value = max([max(values.values()) for values in by_date.values()] + [1.0])
-        columns = []
+        labels = []
+        pedidos_data = []
+        facturas_data = []
         for date, values in sorted(by_date.items()):
-            pedidos_h = max(2, values['pedidos'] / max_value * 100) if values['pedidos'] else 0
-            facturas_h = max(2, values['facturas'] / max_value * 100) if values['facturas'] else 0
-            columns.append(f"\n            <div class=\"trend-day\" title=\"{fmt_date(date)}\">\n              <div class=\"trend-bars\">\n                <span class=\"trend-bar pedidos\" style=\"height:{pedidos_h:.1f}%\"></span>\n                <span class=\"trend-bar facturas\" style=\"height:{facturas_h:.1f}%\"></span>\n              </div>\n              <div class=\"trend-label\">{date.strftime('%d/%m')}</div>\n            </div>\n            ")
-        return '<div class=\'trend-chart\'>' + ''.join(columns) + '</div><div class=\'legend\'><span class=\'dot pedidos\'></span>Pedidos <span class=\'dot facturas\'></span>Facturación</div>'
+            labels.append(date.strftime('%d/%m'))
+            pedidos_data.append(values['pedidos'])
+            facturas_data.append(values['facturas'])
+        
+        import json
+        import random
+        chart_id = f"trendChart_{random.randint(1000, 9999)}"
+        return f"""
+        <div style="width:100%; height:300px; position:relative; margin-bottom: 24px;">
+            <canvas id="{chart_id}"></canvas>
+        </div>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {{
+            if (typeof Chart === 'undefined') return;
+            const ctx = document.getElementById('{chart_id}').getContext('2d');
+            new Chart(ctx, {{
+                type: 'line',
+                data: {{
+                    labels: {json.dumps(labels)},
+                    datasets: [
+                        {{
+                            label: 'Pedidos',
+                            data: {json.dumps(pedidos_data)},
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.3
+                        }},
+                        {{
+                            label: 'Facturación',
+                            data: {json.dumps(facturas_data)},
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.3
+                        }}
+                    ]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {{ mode: 'index', intersect: false }},
+                    color: '#94a3b8',
+                    scales: {{
+                        x: {{ grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }},
+                        y: {{ beginAtZero: true, grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }}
+                    }},
+                    plugins: {{
+                        legend: {{ labels: {{ color: '#f1f5f9' }} }},
+                        tooltip: {{
+                            callbacks: {{
+                                label: function(context) {{
+                                    let label = context.dataset.label || '';
+                                    if (label) {{ label += ': '; }}
+                                    if (context.parsed.y !== null) {{
+                                        label += new Intl.NumberFormat('es-ES', {{ style: 'currency', currency: 'EUR' }}).format(context.parsed.y);
+                                    }}
+                                    return label;
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            }});
+        }});
+        </script>
+        """
 def render_forecast_details(forecast: dict[str, Any]) -> str:
     # ***<module>.render_forecast_details: Failure: Different control flow
     delivery_rows = [[r['documento'], fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast['top_albaranes']]
@@ -1877,18 +2393,255 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         """
         
         # Generar HTML para Producción
+        
+        def render_stock_tables(metrics, columns_html, condition_fn=None):
+            html_out = ""
+            for tipo in ['Sólidos', 'Líquidos', 'Flows', 'SAS']:
+                items = [m for m in metrics if m.get('tipo', 'Otros') == tipo and (condition_fn(m) if condition_fn else True)]
+                if items:
+                    rows = ""
+                    for m in items:
+                        if condition_fn:
+                            # It's for necesidades
+                            necesidad = m['pedido'] - m['stock_envasado'] - m['stock_granel']
+                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td><td class='text-right' style='color:var(--danger); font-weight:bold;'>{necesidad:,.0f}</td></tr>".replace(",", ".")
+                        else:
+                            # It's for stock general
+                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".")
+                    
+                    html_out += f"<h3 style='margin-top: 16px; margin-bottom: 8px;'>{tipo}</h3>"
+                    html_out += f"<table><thead><tr>{columns_html}</tr></thead><tbody>{rows}</tbody></table>"
+            return html_out
 
         stock_metrics = report.get('stock_comparison', [])
         if stock_metrics:
-            stock_rows = "".join([f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".") for m in stock_metrics])
-            stock_table = f"<table><thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Material pedido</th><th class='text-right'>Stock envasado</th><th class='text-right'>Stock granel</th></tr></thead><tbody>{stock_rows}</tbody></table>"
+            stock_cols = "<th>Código</th><th>Descripción</th><th class='text-right'>Material pedido</th><th class='text-right'>Stock envasado</th><th class='text-right'>Stock granel</th>"
+            stock_tables_html = render_stock_tables(stock_metrics, stock_cols)
             
+            # Pie Chart Data Calculation
+            stock_by_tipo = {'Sólidos': 0, 'Líquidos': 0, 'Flows': 0, 'SAS': 0}
+            for m in stock_metrics:
+                tipo = m.get('tipo', '')
+                if tipo in stock_by_tipo:
+                    stock_by_tipo[tipo] += max(0, m['pedido'] - m['stock_envasado'] - m['stock_granel'])
+                
+            pie_labels = list(stock_by_tipo.keys())
+            pie_data = list(stock_by_tipo.values())
+            
+            import json
+            import random
+            pie_id = f"stockPie_{random.randint(1000, 9999)}"
+            
+            colors = ['#f59e0b', '#3b82f6', '#10b981', '#a855f7', '#94a3b8']
+            custom_legend_html = "<div style='display:flex; justify-content:center; gap: 16px; margin-top: 16px; flex-wrap: wrap;'>"
+            for i, label in enumerate(pie_labels):
+                val = pie_data[i]
+                color = colors[i % len(colors)]
+                custom_legend_html += f"<div style='display:flex; align-items:center; gap:6px;'><span style='width:12px; height:12px; background:{color}; border-radius:50%;'></span><span style='font-size:14px;'>{html.escape(label)}: <strong>{val:,.0f}</strong></span></div>".replace(",", ".")
+            custom_legend_html += "</div>"
+            
+            pie_chart_html = f"""
+            <div style="width:100%; max-width: 400px; margin: 0 auto 32px;">
+                <canvas id="{pie_id}"></canvas>
+                {custom_legend_html}
+            </div>
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {{
+                if (typeof Chart === 'undefined') return;
+                const ctx = document.getElementById('{pie_id}').getContext('2d');
+                new Chart(ctx, {{
+                    type: 'doughnut',
+                    data: {{
+                        labels: {json.dumps(pie_labels)},
+                        datasets: [{{
+                            data: {json.dumps(pie_data)},
+                            backgroundColor: {json.dumps(colors)},
+                            borderWidth: 0
+                        }}]
+                    }},
+                    options: {{
+                        responsive: true,
+                        layout: {{
+                            padding: 30
+                        }},
+                        plugins: {{
+                            legend: {{ display: false }},
+                            tooltip: {{
+                                callbacks: {{
+                                    label: function(context) {{
+                                        let label = context.label || '';
+                                        if (label) {{ label += ': '; }}
+                                        if (context.parsed !== null) {{
+                                            label += new Intl.NumberFormat('es-ES').format(context.parsed);
+                                        }}
+                                        return label;
+                                    }}
+                                }}
+                            }}
+                        }}
+                    }},
+                    plugins: [{{
+                        id: 'sliceLabels',
+                        afterDraw(chart) {{
+                            const ctx = chart.ctx;
+                            chart.data.datasets.forEach((dataset, i) => {{
+                                chart.getDatasetMeta(i).data.forEach((element, index) => {{
+                                    const val = dataset.data[index];
+                                    if(val === 0) return;
+                                    const angle = element.endAngle - element.startAngle;
+                                    const pos = element.tooltipPosition();
+                                    const label = chart.data.labels[index];
+                                    const text = label + ' ' + new Intl.NumberFormat('es-ES').format(val);
+                                    ctx.save();
+                                    ctx.fillStyle = '#ffffff';
+                                    ctx.font = 'bold 12px sans-serif';
+                                    ctx.textBaseline = 'middle';
+                                    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                                    ctx.shadowBlur = 4;
+
+                                    if(angle > 0.3) {{
+                                        ctx.textAlign = 'center';
+                                        ctx.fillText(text, pos.x, pos.y);
+                                    }} else {{
+                                        const midAngle = (element.startAngle + element.endAngle) / 2;
+                                        const r = element.outerRadius * 1.15;
+                                        const outX = element.x + Math.cos(midAngle) * r;
+                                        const outY = element.y + Math.sin(midAngle) * r;
+                                        ctx.textAlign = outX < element.x ? 'right' : 'left';
+                                        
+                                        ctx.beginPath();
+                                        ctx.moveTo(pos.x, pos.y);
+                                        ctx.lineTo(outX, outY);
+                                        ctx.lineWidth = 1.5;
+                                        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                                        ctx.shadowBlur = 0;
+                                        ctx.stroke();
+                                        
+                                        ctx.shadowBlur = 4;
+                                        ctx.fillText(text, outX + (outX < element.x ? -5 : 5), outY);
+                                    }}
+                                    ctx.restore();
+                                }});
+                            }});
+                        }}
+                    }}]
+                }});
+            }});
+            </script>
+            """
+            top5_html = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 32px;'>"
+            for tipo in ['Sólidos', 'Líquidos', 'Flows', 'SAS']:
+                items = [dict(m) for m in stock_metrics if m.get('tipo', 'Otros') == tipo]
+                for m in items:
+                    m['necesidad'] = max(0, m['pedido'] - m['stock_envasado'] - m['stock_granel'])
+                
+                items_with_need = [m for m in items if m['necesidad'] > 0]
+                total_necesidad = sum(m['necesidad'] for m in items_with_need)
+                
+                if total_necesidad > 0:
+                    top5 = sorted(items_with_need, key=lambda x: x['necesidad'], reverse=True)[:5]
+                    top5_html += f"""
+                    <div class="panel" style="margin-bottom: 0; padding: 16px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05);">
+                        <h3 style="margin-top: 0; font-size: 14px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">Top 5 Necesidades: {tipo}</h3>
+                        <ul style="list-style: none; padding: 0; margin: 0; font-size: 13px;">
+                    """
+                    for m in top5:
+                        necesidad_pct = (m['necesidad'] / total_necesidad) * 100
+                        item_html = f"""
+                            <li style="display: flex; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;">
+                                <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; font-weight: 500;" title="{html.escape(m['codigo'])}">{html.escape(m['descripcion'])}</span>
+                                <div style="text-align: right;">
+                                    <strong style="color: var(--danger);">{m['necesidad']:,.0f}</strong> 
+                                    <span style="color: var(--muted); font-size: 11px;">({necesidad_pct:.1f}%)</span>
+                                </div>
+                            </li>
+                        """.replace(',', '.')
+                        top5_html += item_html
+                    top5_html += "</ul></div>"
+            top5_html += "</div>"
+            
+            stock_insights = report.get("stock_insights", {})
+            stock_insights_html = ""
+            if stock_insights:
+                roturas = stock_insights.get("rotura", [])
+                roturas_rows = []
+                for r in roturas[:10]:
+                    cobertura = "0 días" if r['cobertura'] == 0 else f"{r['cobertura']:.1f} días".replace('.', ',')
+                    stock_fmt = f"{r['stock']:,.0f}".replace(',', '.')
+                    consumo_fmt = f"{r['consumo_medio']:,.0f}".replace(',', '.')
+                    roturas_rows.append(f"<tr><td>{html.escape(r['articulo'])}</td><td class='text-right'>{stock_fmt}</td><td class='text-right'>{consumo_fmt}</td><td class='text-right' style='color:#ef4444; font-weight:bold;'>{cobertura}</td></tr>")
+                roturas_rows_str = "".join(roturas_rows)
+                roturas_table = f"<table><thead><tr><th>Artículos en Riesgo (< 15 días)</th><th class='text-right'>Stock Actual</th><th class='text-right'>Consumo Medio/Mes</th><th class='text-right'>Cobertura Estimada</th></tr></thead><tbody>{roturas_rows_str}</tbody></table>" if roturas_rows_str else "<p class='note' style='color:var(--success);'>No hay alertas de rotura inminente.</p>"
+
+                total_cap = stock_insights.get("total_capital", 0.0)
+                obs_cap = stock_insights.get("obsoleto_capital", 0.0)
+                obs_pct = (obs_cap / total_cap * 100) if total_cap > 0 else 0
+                
+                total_cap_str = f"{total_cap:,.2f} EUR".replace(',', 'X').replace('.', ',').replace('X', '.')
+                obs_cap_str = f"{obs_cap:,.2f} EUR".replace(',', 'X').replace('.', ',').replace('X', '.')
+                obs_pct_str = f"{obs_pct:.1f}%".replace('.', ',')
+                
+                cap_groups = stock_insights.get("capital_groups", {})
+                cap_groups_list = sorted(cap_groups.values(), key=lambda x: x['total_cant'], reverse=True)[:5]
+                cap_rows = []
+                for g in cap_groups_list:
+                    if not g['items']: continue
+                    
+                    fam_name = g['base_code']
+                    for item in g['items']:
+                        if item['codigo'] == g['base_code']:
+                            fam_name = item['desc']
+                            break
+                    if fam_name == g['base_code'] and len(g['items']) > 0:
+                        fam_name = g['items'][0]['desc'].split(',')[0].strip()
+                        
+                    f = g['formats']
+                    def fmt(v): return f"{v:,.0f}".replace(',', '.') if v > 0 else "-"
+                    
+                    cap_rows.append(f"<tr><td>{html.escape(fam_name)}</td><td class='text-right'>{fmt(f['granel'])}</td><td class='text-right'>{fmt(f['1L'])}</td><td class='text-right'>{fmt(f['5L'])}</td><td class='text-right'>{fmt(f['20L'])}</td><td class='text-right'>{fmt(f['200L'])}</td><td class='text-right'>{fmt(f['1000L'])}</td><td class='text-right' style='font-weight:bold;'>{fmt(g['total_cant'])}</td></tr>")
+                cap_rows_str = "".join(cap_rows)
+                cap_table = f"<div style='margin-top:12px; font-size:11px; overflow-x:auto;'><table style='margin-bottom:0;'><thead><tr><th>Familia</th><th class='text-right'>Granel</th><th class='text-right'>1L/Kg</th><th class='text-right'>5L/Kg</th><th class='text-right'>20L/Kg</th><th class='text-right'>200L/Kg</th><th class='text-right'>1000L/Kg</th><th class='text-right'>Total Familia</th></tr></thead><tbody>{cap_rows_str}</tbody></table></div>" if cap_rows_str else ""
+                
+                obs_items = stock_insights.get("obsoleto_items", [])
+                obs_rows = []
+                for item in obs_items[:5]:
+                    name = html.escape(item['articulo'][:40] + ('...' if len(item['articulo']) > 40 else ''))
+                    val = f"{item['valor']:,.2f} €".replace(',', 'X').replace('.', ',').replace('X', '.')
+                    obs_rows.append(f"<tr><td>{name}</td><td class='text-right' style='color:#ef4444;'>{val}</td></tr>")
+                obs_rows_str = "".join(obs_rows)
+                obs_table = f"<div style='margin-top:12px; font-size:12px;'><table style='margin-bottom:0;'><thead><tr><th>Top 5 Obsoletos</th><th class='text-right'>Valoración</th></tr></thead><tbody>{obs_rows_str}</tbody></table></div>" if obs_rows_str else ""
+                
+                stock_insights_html = f"""
+                <div style="display: grid; grid-template-columns: 2.2fr 1fr; gap: 16px; margin-bottom: 24px;">
+                    <div class="panel kpi-card" style="margin-bottom: 0;">
+                        <h3>Capital Inmovilizado (Producto Acabado)</h3>
+                        <div class="kpi-value">{total_cap_str}</div>
+                        <div class="kpi-trend">Valor estimado del stock actual</div>
+                        {cap_table}
+                    </div>
+                    <div class="panel kpi-card" style="margin-bottom: 0;">
+                        <h3>Stock Obsoleto (Sin ventas YTD)</h3>
+                        <div class="kpi-value" style="color: #ef4444;">{obs_cap_str}</div>
+                        <div class="kpi-trend">Supone un {obs_pct_str} del capital total</div>
+                        {obs_table}
+                    </div>
+                </div>
+                <section class="panel" style="margin-bottom: 24px;">
+                    <h2 style="color: #ef4444;">🚨 Alerta de Rotura de Stock</h2>
+                    <p class="note" style="margin-bottom: 12px;">Artículos con stock para menos de 15 días según el consumo medio mensual (YTD).</p>
+                    {roturas_table}
+                </section>
+                """
+
             stock_html = f"""
             <div class="tab-content" id="stock">
+              {stock_insights_html}
               <section class="panel">
-                <h2>📦 Comparativa de Stock vs Pedidos/Ofertas</h2>
-                <p class="note" style="margin-bottom: 24px;">Análisis de material requerido frente al stock envasado y a granel disponible.</p>
-                {stock_table}
+                <h2>📦 Distribución de Necesidades de Fabricación</h2>
+                <p class="note" style="margin-bottom: 24px;">Material pendiente de fabricar (Pedidos - Stock Disponible) por sección.</p>
+                {pie_chart_html}
+                {top5_html}
+                {stock_tables_html}
               </section>
             </div>
             """
@@ -1899,23 +2652,326 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
             </div>
             """
 
+        necesidades_list = []
+        for m in stock_metrics:
+            necesidad = m['pedido'] - m['stock_envasado'] - m['stock_granel']
+            if necesidad > 0:
+                necesidades_list.append((m, necesidad))
+                
+        necesidades_list.sort(key=lambda x: x[1], reverse=True)
+        
+        if necesidades_list:
+            necesidades_cols = "<th>Código</th><th>Descripción</th><th class='text-right'>Material pedido</th><th class='text-right'>Stock envasado</th><th class='text-right'>Stock granel</th><th class='text-right'>Necesidad a fabricar</th>"
+            sorted_metrics = [item[0] for item in necesidades_list]
+            necesidades_tables_html = render_stock_tables(sorted_metrics, necesidades_cols, lambda m: m['pedido'] - m['stock_envasado'] - m['stock_granel'] > 0)
+        else:
+            necesidades_tables_html = "<p class='note'>No hay necesidades de fabricación (el stock cubre los pedidos).</p>"
+            
+        tiempos = report.get('tiempos_estimados', {}) if report else {}
+        tiempos_html = ""
+        if tiempos:
+            total_factory_hours = 0
+            for tipo in ['Sólidos', 'Líquidos', 'Flows', 'SAS']:
+                data = tiempos.get(tipo, {})
+                total_factory_hours += data.get('fab', 0) + data.get('env', 0) + data.get('cambios', 0) + data.get('idle', 0.0)
+
+            tiempos_html = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;'>"
+            for tipo in ['Sólidos', 'Líquidos', 'Flows', 'SAS']:
+                data = tiempos.get(tipo, {})
+                fab = data.get('fab', 0)
+                env = data.get('env', 0)
+                cam = data.get('cambios', 0)
+                idle = data.get('idle', 0.0)
+                total = fab + env + cam + idle
+                if total > 0:
+                    dias = total / 16.0
+                    semanas = total / 80.0
+                    carga_pct = (total / total_factory_hours * 100) if total_factory_hours > 0 else 0
+                    
+                    progress_html = f"""
+                        <div style="margin-top: 8px; margin-bottom: 12px;">
+                            <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; color:var(--muted);">
+                                <span>Carga sobre total fábrica</span>
+                                <span style="font-weight:bold; color:var(--accent);">{carga_pct:,.1f}%</span>
+                            </div>
+                            <div style="width: 100%; background: rgba(255,255,255,0.1); border-radius: 4px; height: 6px; overflow: hidden;">
+                                <div style="width: {carga_pct}%; background: var(--accent); height: 100%; border-radius: 4px;"></div>
+                            </div>
+                        </div>
+                    """.replace(',', '.')
+
+                    tiempos_html += f"""
+                    <div class="panel" style="margin-bottom:0; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); padding:16px;">
+                        <h3 style="margin-top:0; font-size:14px; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px;">⏱️ Tiempos estimados {tipo}</h3>
+                        <div style="font-size:18px; font-weight:bold; color:var(--accent); margin-bottom:4px; display:flex; flex-wrap:wrap; gap:8px; align-items:baseline;">
+                            <span>{total:,.1f} h</span>
+                            <span style="color:var(--muted); font-weight:normal;">|</span>
+                            <span>{dias:,.1f} días</span>
+                            <span style="color:var(--muted); font-weight:normal;">|</span>
+                            <span>{semanas:,.1f} semanas</span>
+                        </div>
+                        {progress_html}
+                        <div style="font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-bottom:4px;"><span>Fabricación:</span> <span style="color:#fff;">{fab:,.1f} h</span></div>
+                        <div style="font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-bottom:4px;"><span>Envasado:</span> <span style="color:#fff;">{env:,.1f} h</span></div>
+                        <div style="font-size:12px; color:var(--muted); display:flex; justify-content:space-between; margin-bottom:4px;"><span>Cambios (1h/prod):</span> <span style="color:#fff;">{cam} h</span></div>
+                        <div style="font-size:12px; color:var(--muted); display:flex; justify-content:space-between;"><span>Ajuste turno:</span> <span style="color:#fff;">{idle:,.1f} h</span></div>
+                    </div>
+                    """.replace(',', '.')
+            tiempos_html += "</div>"
+
         prod_metrics = report.get('produccion', {})
         if prod_metrics:
-            art_rows = "".join([f"<tr><td>{html.escape(m['articulo'])}</td><td class='text-right'>{money(m['coste'])}</td><td class='text-right'>{m['unidades']:,.0f}</td></tr>".replace(",", ".") for m in prod_metrics.get('top_articulos', [])])
-            art_table = f"<table><thead><tr><th>Artículo</th><th class='text-right'>Coste</th><th class='text-right'>Unidades</th></tr></thead><tbody>{art_rows}</tbody></table>" if art_rows else "<p class='note'>No hay datos.</p>"
+            top_arts_unidades = prod_metrics.get('top_articulos_unidades', [])
+            top_arts_coste = prod_metrics.get('top_articulos_coste', [])
             
-            evo_rows = "".join([f"<tr><td>{m['fecha']}</td><td class='text-right'>{m['unidades']:,.0f}</td></tr>".replace(",", ".") for m in prod_metrics.get('daily_evolution', [])])
-            evo_table = f"<table><thead><tr><th>Fecha</th><th class='text-right'>Unidades</th></tr></thead><tbody>{evo_rows}</tbody></table>" if evo_rows else "<p class='note'>No hay datos.</p>"
+            art_rows = []
+            max_len = max(len(top_arts_unidades), len(top_arts_coste))
+            for i in range(max_len):
+                u_item = top_arts_unidades[i] if i < len(top_arts_unidades) else {'articulo': '-', 'unidades': 0}
+                c_item = top_arts_coste[i] if i < len(top_arts_coste) else {'articulo': '-', 'coste': 0, 'unidades': 0}
+                
+                u_name = html.escape(u_item['articulo'])
+                u_val = f"{u_item['unidades']:,.0f}".replace(',', '.') if u_item['articulo'] != '-' else "-"
+                
+                c_name = html.escape(c_item['articulo'])
+                c_coste = c_item.get('coste', 0)
+                c_uds = c_item.get('unidades', 0)
+                c_unit = c_coste / c_uds if c_uds > 0 else 0
+                c_unit_str = f"{c_unit:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.') + " EUR" if c_item['articulo'] != '-' else "-"
+                
+                art_rows.append(f"<tr><td>{u_name}</td><td class='text-right'>{u_val}</td><td>{c_name}</td><td class='text-right'>{c_unit_str}</td></tr>")
+                
+            art_rows_str = "".join(art_rows)
+            art_table = f"<table><thead><tr><th>Top 5 Unidades</th><th class='text-right'>Unidades</th><th>Top 5 Coste</th><th class='text-right'>Coste Ud.</th></tr></thead><tbody>{art_rows_str}</tbody></table>" if art_rows_str else "<p class='note'>No hay datos.</p>"
+            
+            abc_html = ""
 
-            cost_dev = prod_metrics.get('coste_desviacion', 0)
-            dev_color = 'var(--success)' if cost_dev >= 0 else 'var(--danger)'
+            # Chart.js Bar Chart for Top Artículos
+            top_arts = top_arts_unidades
+            if top_arts:
+                top_labels = [m['articulo'][:15] + ('...' if len(m['articulo']) > 15 else '') for m in top_arts]
+                top_data = [m['unidades'] for m in top_arts]
+                
+                import json
+                import random
+                top_id = f"topArt_{random.randint(1000, 9999)}"
+                top_chart_html = f"""
+                <div style="width:100%; flex: 1; min-height: 250px; position:relative; margin-bottom: 16px;">
+                    <canvas id="{top_id}"></canvas>
+                </div>
+                <script>
+                document.addEventListener('DOMContentLoaded', function() {{
+                    if (typeof Chart === 'undefined') return;
+                    const ctx = document.getElementById('{top_id}').getContext('2d');
+                    new Chart(ctx, {{
+                        type: 'bar',
+                        data: {{
+                            labels: {json.dumps(top_labels)},
+                            datasets: [{{
+                                label: 'Unidades',
+                                data: {json.dumps(top_data)},
+                                backgroundColor: '#10b981',
+                                borderRadius: 4
+                            }}]
+                        }},
+                        options: {{
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {{
+                                legend: {{ display: false }},
+                                tooltip: {{
+                                    callbacks: {{
+                                        label: function(context) {{
+                                            return new Intl.NumberFormat('es-ES').format(context.parsed.x) + ' uds';
+                                        }}
+                                    }}
+                                }}
+                            }},
+                            scales: {{
+                                x: {{ grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }},
+                                y: {{ grid: {{ display: false }}, ticks: {{ color: '#94a3b8' }} }}
+                            }}
+                        }}
+                    }});
+                }});
+                </script>
+                """
+            else:
+                top_chart_html = ""
+                
+            monthly_evo = prod_metrics.get('monthly_evolution', [])
+            if monthly_evo:
+                month_names_chart = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+                monthly_labels = [month_names_chart[m['mes'] - 1] for m in monthly_evo]
+                monthly_months = [m['mes'] for m in monthly_evo]
+                
+                types = ['Líquidos', 'Sólidos', 'Flows', 'SAS']
+                colors = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#94a3b8']
+                datasets = []
+                for idx, t in enumerate(types):
+                    data = [m.get(t, 0) for m in monthly_evo]
+                    if any(d > 0 for d in data):
+                        datasets.append({
+                            'label': t,
+                            'data': data,
+                            'backgroundColor': colors[idx],
+                            'barPercentage': 0.85,
+                            'categoryPercentage': 0.95
+                        })
+                
+
+                monthly_id = f"monthly_{random.randint(1000, 9999)}"
+                monthly_chart_html = f"""
+                <div style="width:100%; height:450px; position:relative; margin-bottom: 16px;">
+                    <canvas id="{monthly_id}"></canvas>
+                </div>
+                <script>
+                document.addEventListener('DOMContentLoaded', function() {{
+                    if (typeof Chart === 'undefined') return;
+                    const ctx = document.getElementById('{monthly_id}').getContext('2d');
+                    new Chart(ctx, {{
+                        type: 'bar',
+                        data: {{
+                            labels: {json.dumps(monthly_labels)},
+                            datasets: {json.dumps(datasets)}
+                        }},
+                        plugins: [{{
+                            id: 'custom_labels',
+                            afterDatasetsDraw(chart, args, options) {{
+                                const {{ ctx }} = chart;
+                                ctx.font = 'bold 11px Inter, sans-serif';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                ctx.fillStyle = '#ffffff';
+                                
+                                chart.data.datasets.forEach((dataset, i) => {{
+                                    const meta = chart.getDatasetMeta(i);
+                                    if(meta.hidden) return;
+                                    meta.data.forEach((bar, index) => {{
+                                        const val = dataset.data[index];
+                                        if (val > 0) {{
+                                            const label = Math.round(val / 1000) + 'k';
+                                            const base = bar.base;
+                                            const x = bar.x;
+                                            const width = Math.abs(x - base);
+                                            const center_x = (base + x) / 2;
+                                            if (width > 24) {{
+                                                ctx.fillText(label, center_x, bar.y);
+                                            }}
+                                        }}
+                                    }});
+                                }});
+                                
+                                ctx.fillStyle = '#cbd5e1';
+                                ctx.textAlign = 'left';
+                                ctx.font = 'bold 12px Inter, sans-serif';
+                                chart.data.labels.forEach((_, index) => {{
+                                    let sum = 0;
+                                    let max_x = 0;
+                                    let y = 0;
+                                    chart.data.datasets.forEach((dataset, i) => {{
+                                        const meta = chart.getDatasetMeta(i);
+                                        if(!meta.hidden) {{
+                                            const val = dataset.data[index];
+                                            sum += val;
+                                            const bar = meta.data[index];
+                                            if (bar && bar.x > max_x) {{ max_x = bar.x; y = bar.y; }}
+                                        }}
+                                    }});
+                                    if (sum > 0) {{
+                                        const totalK = Math.round(sum / 1000).toLocaleString('es-ES') + 'k';
+                                        ctx.fillText(totalK, max_x + 8, y);
+                                    }}
+                                }});
+                            }}
+                        }}],
+                        options: {{
+                            onClick: (e, activeElements) => {{
+                                if (activeElements.length > 0) {{
+                                    const index = activeElements[0].index;
+                                    const months = {json.dumps(monthly_months)};
+                                    const clickedMonth = months[index];
+                                    const year = {current.year};
+                                    const date = new Date(year, clickedMonth, 0);
+                                    const dateStr = year + '-' + clickedMonth.toString().padStart(2, '0') + '-' + date.getDate().toString().padStart(2, '0');
+                                    window.location.href = '/default?date=' + dateStr;
+                                }}
+                            }},
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {{ legend: {{ display: true, position: 'bottom', labels: {{ color: '#94a3b8', boxWidth: 12 }} }} }},
+                            scales: {{
+                                x: {{ stacked: true, grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }},
+                                y: {{ stacked: true, grid: {{ display: false }}, ticks: {{ color: '#94a3b8' }} }}
+                            }}
+                        }}
+                    }});
+                }});
+                </script>
+                """
+            else:
+                monthly_chart_html = ""
+            
+            daily_evo = prod_metrics.get('daily_evolution', [])
+            if daily_evo:
+                part1 = daily_evo[:16]
+                part2 = daily_evo[16:]
+                evo_rows_html = []
+                # Header rows: Days
+                row_html = "<tr><th style='padding:6px 8px; font-size:12px; background: rgba(255,255,255,0.05);'>Día</th>"
+                for m in part1:
+                    fecha_fmt = f"{m['fecha'][8:]}"
+                    row_html += f"<td class='text-center' style='padding:8px 4px; font-size:12px; font-weight:500; border-bottom:1px solid rgba(255,255,255,0.1);'>{fecha_fmt}</td>"
+                row_html += "</tr>"
+                evo_rows_html.append(row_html)
+                
+                # Data rows: Units
+                row_html = "<tr><th style='padding:6px 8px; font-size:12px; background: rgba(255,255,255,0.05);'>Uds</th>"
+                for m in part1:
+                    row_html += f"<td class='text-center' style='padding:8px 4px; font-size:12px;'>{m['unidades']:,.0f}</td>".replace(",", ".")
+                row_html += "</tr>"
+                evo_rows_html.append(row_html)
+                
+                # Header rows: Days (Part 2)
+                row_html = "<tr><th style='padding:6px 8px; font-size:12px; background: rgba(255,255,255,0.05); border-top:1px solid rgba(255,255,255,0.1);'>Día</th>"
+                for m in part2:
+                    fecha_fmt = f"{m['fecha'][8:]}"
+                    row_html += f"<td class='text-center' style='padding:8px 4px; font-size:12px; font-weight:500; border-top:1px solid rgba(255,255,255,0.1); border-bottom:1px solid rgba(255,255,255,0.1);'>{fecha_fmt}</td>"
+                for _ in range(16 - len(part2)):
+                     row_html += "<td style='border-top:1px solid rgba(255,255,255,0.1); border-bottom:1px solid rgba(255,255,255,0.1);'></td>"
+                row_html += "</tr>"
+                evo_rows_html.append(row_html)
+                
+                # Data rows: Units (Part 2)
+                row_html = "<tr><th style='padding:6px 8px; font-size:12px; background: rgba(255,255,255,0.05);'>Uds</th>"
+                for m in part2:
+                    row_html += f"<td class='text-center' style='padding:8px 4px; font-size:12px;'>{m['unidades']:,.0f}</td>".replace(",", ".")
+                for _ in range(16 - len(part2)):
+                     row_html += "<td></td>"
+                row_html += "</tr>"
+                evo_rows_html.append(row_html)
+                
+                evo_table_content = "".join(evo_rows_html)
+                evo_table = f"<div style='overflow-x: auto;'><table style='width:100%; margin:0; min-width: 600px;'><tbody>{evo_table_content}</tbody></table></div>"
+            else:
+                evo_table = "<p class='note'>No hay datos.</p>"
+
             coste_unitario = prod_metrics.get('coste_unitario', 0)
             coste_unitario_str = f"{coste_unitario:.2f} EUR".replace('.', ',')
+            
+            eficiencia = prod_metrics.get('eficiencia_oee', 0)
+            eficiencia_str = f"{eficiencia:.1f}%".replace('.', ',') if eficiencia > 0 else "-"
+            eficiencia_color = "#10b981" if eficiencia >= 90 else ("#f59e0b" if eficiencia >= 75 else "#ef4444")
+            
+            meses_nombres = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+            current_month_name = meses_nombres[current.month - 1]
 
             produccion_html = f"""
             <div class="tab-content" id="produccion-dashboard">
               <section class="panel">
-                <h2>🏭 Dashboard de Producción (MTD)</h2>
+                <h2>🏭 Dashboard de Producción {current_month_name}</h2>
                 <div class="pdf-kpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
                   <div class="panel kpi-card" style="margin-bottom: 0;">
                     <h3>Volumen MTD</h3>
@@ -1923,42 +2979,59 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     <div class="kpi-trend">Día Ant: {prod_metrics.get('daily_unidades', 0):,.0f}</div>
                   </div>
                   <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>OEE (Eficiencia)</h3>
-                    <div class="kpi-value">{prod_metrics.get('oee', 0):.1f}%</div>
-                    <div class="kpi-trend">Teórico: {prod_metrics.get('mtd_tiempo_teorico', 0):.1f}h</div>
+                    <h3>Adherencia al Plan</h3>
+                    <div class="kpi-value">{prod_metrics.get('adherencia', 0):.1f}%</div>
+                    <div class="kpi-trend">Objetivo: {prod_metrics.get('mtd_uds_a_fabricar', 0):,.0f}</div>
                   </div>
                   <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>Desviación Costes</h3>
-                    <div class="kpi-value" style="color: {dev_color};">{money(cost_dev)}</div>
-                    <div class="kpi-trend">Gasto Real: {money(prod_metrics.get('mtd_coste_real', 0))}</div>
+                    <h3>Coste Real Total</h3>
+                    <div class="kpi-value">{prod_metrics.get('mtd_coste_real', 0):,.2f} EUR</div>
+                    <div class="kpi-trend">Acumulado MTD</div>
                   </div>
                   <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>Tasa Rechazo (Scrap)</h3>
-                    <div class="kpi-value">{prod_metrics.get('scrap_rate', 0):.1f}%</div>
-                    <div class="kpi-trend">Unidades: {prod_metrics.get('mtd_rechazos', 0):,.0f}</div>
-                  </div>
-                  <div class="panel kpi-card" style="margin-bottom: 0;">
-                    <h3>Coste Medio/Ud</h3>
-                    <div class="kpi-value">{coste_unitario_str}</div>
+                    <h3>Horas Invertidas</h3>
+                    <div class="kpi-value">{prod_metrics.get('mtd_tiempo_real', 0):.1f}h</div>
                   </div>
                 </div>
               </section>
-              <div class="pdf-grid-2" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 24px;">
-                <section class="panel" style="margin-bottom: 0;">
-                  <h2>Evolución Diaria (Volumen)</h2>
-                  {evo_table}
-                </section>
-                <section class="panel" style="margin-bottom: 0;">
-                  <h2>Top Artículos (por Coste Real)</h2>
+              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px;">
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <section class="panel" style="margin-bottom: 0;">
+                    <h2>Evolución Diaria (Volumen)</h2>
+                    {evo_table}
+                  </section>
+                  <section class="panel" style="margin-bottom: 0;">
+                    <h2>Producción Mensual (YTD)</h2>
+                    {monthly_chart_html}
+                  </section>
+                </div>
+                <section class="panel" style="margin-bottom: 0; display: flex; flex-direction: column; height: 100%;">
+                  <h2>Top Artículos (Unidades)</h2>
+                  {top_chart_html}
                   {art_table}
+                  {abc_html}
                 </section>
               </div>
+              
+              {tiempos_html}
+              
+              <section class="panel" style="margin-bottom: 24px;">
+                <h2>⚠️ Cuadro de Necesidades de Fabricación</h2>
+                <p class="note" style="margin-bottom: 12px;">Artículos cuyo material pedido supera al stock disponible (envasado + granel).</p>
+                {necesidades_tables_html}
+              </section>
             </div>
             """
         else:
-            produccion_html = """
+            produccion_html = f"""
             <div class="tab-content" id="produccion-dashboard">
               <section class="panel empty-state"><div class="empty-icon">🏭</div><h2>Sin datos de Producción</h2><p>Sube el archivo de Producción en Importación.</p></section>
+              {tiempos_html}
+              <section class="panel" style="margin-bottom: 24px;">
+                <h2>⚠️ Cuadro de Necesidades de Fabricación</h2>
+                <p class="note" style="margin-bottom: 12px;">Artículos cuyo material pedido supera al stock disponible (envasado + granel).</p>
+                {necesidades_tables_html}
+              </section>
             </div>
             """
 
@@ -2574,33 +3647,36 @@ class Handler(BaseHTTPRequestHandler):
                     report_date = get_default_report_date()
                 else:
                     report_date = adjust_report_date(report_date)
+                
+                # Cargar datos existentes para no sobrescribir con vacíos o defaults si no se subió el archivo
+                existing_dfs = load_report_data(report_date) or {}
+                
                 files = {}
                 for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
                     file_item = form.get_file(key)
                     if file_item and file_item[0]:
                         files[key] = file_item[1]
-                    elif key in DEFAULT_FILES and Path(DEFAULT_FILES[key]).exists():
-                        files[key] = DEFAULT_FILES[key]
-                dfs = {name: parse_excel_to_normalized_df(source, name) for name, source in files.items()}
-                dfs = {name: ensure_types_normalized_df(df, name) for name, df in dfs.items()}
                 
-                # Validar que los archivos contengan datos para el mes/año seleccionado
-                try:
-                    report_date_pd = pd.to_datetime(report_date)
-                    for name, df in dfs.items():
-                        if not df.empty and 'fecha' in df.columns:
-                            max_date = df['fecha'].max()
-                            if pd.notna(max_date) and (max_date.year != report_date_pd.year or max_date.month != report_date_pd.month):
-                                # Allow if the file is just slightly outdated but same month, 
-                                # but if it's a completely different month, warn the user!
-                                raise ValueError(f"El archivo de '{name}' no contiene datos para el mes seleccionado ({report_date_pd.strftime('%m/%Y')}). La última fecha registrada es {max_date.strftime('%d/%m/%Y')}. Por favor, verifica que has subido el archivo correcto para esta fecha.")
-                except ValueError as exc:
-                    error_msg = str(exc)
-                    if "no contiene datos para el mes seleccionado" in error_msg:
-                        save_data_to_local('9999-12-31', dfs)
-                        self.send_html(render_report(error=error_msg, selected_date=report_date, show_confirm=True))
-                        return
-                    raise
+                # Si no subió absolutamente ningún archivo, cargamos los defaults como fallback inicial (opcional)
+                if not files and not existing_dfs:
+                    for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+                        if key in DEFAULT_FILES and Path(DEFAULT_FILES[key]).exists():
+                            files[key] = DEFAULT_FILES[key]
+
+                dfs_uploaded = {name: parse_excel_to_normalized_df(source, name) for name, source in files.items()}
+                if 'produccion' in dfs_uploaded:
+                    dfs_uploaded['produccion'].to_csv('uploaded_produccion_raw.csv', index=False, encoding='utf-8')
+                dfs_uploaded = {name: ensure_types_normalized_df(df, name) for name, df in dfs_uploaded.items()}
+                
+                dfs = {}
+                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+                    if key in dfs_uploaded:
+                        dfs[key] = dfs_uploaded[key]
+                    else:
+                        dfs[key] = existing_dfs.get(key, pd.DataFrame())
+                
+                # Validación de fechas eliminada a petición del usuario.
+                # Procesar siempre los ficheros aunque no tengan datos para el mes.
                 
                 save_report_data(report_date, dfs)
                 self.send_redirect(f'/default?date={report_date}')

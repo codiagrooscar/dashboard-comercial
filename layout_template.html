@@ -8,6 +8,7 @@
   <!-- <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"> -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -1655,6 +1656,15 @@
         
         // Guardar en localStorage
         localStorage.setItem("selectedTab", tabId);
+        
+        // Fix Chart.js rendering in hidden tabs
+        if (typeof Chart !== 'undefined' && Chart.instances) {
+          Object.values(Chart.instances).forEach(chart => {
+            if (chart && typeof chart.resize === 'function') {
+              chart.resize();
+            }
+          });
+        }
       } catch (err) {
         alert("Error in switchTab: " + err.message);
       }
