@@ -461,6 +461,12 @@ def load_data_from_supabase(report_date: str) -> dict[str, pd.DataFrame] | None:
         else:
             dfs[name] = pd.DataFrame(records)
         dfs[name] = ensure_types_normalized_df(dfs[name], name)
+    try:
+        comments_records = supabase_request_all('document_comments', query_params={'select': '*'})
+        dfs['document_comments'] = pd.DataFrame(comments_records)
+    except Exception as e:
+        print(f'Error cargando document_comments de Supabase: {e}')
+        dfs['document_comments'] = pd.DataFrame()
     if all((df.empty for df in dfs.values())):
         return
     else:
@@ -1425,15 +1431,18 @@ def calc_split(df: pd.DataFrame, amount_col: str, doc_type: str = None) -> dict[
     if df.empty or 'zona' not in df.columns:
         return {'nacional': 0.0, 'exportacion': 0.0}
     
-    is_nacional = df['zona'] == 'Nacional'
-    is_export = df['zona'] == 'Exportación'
-        
-    return {
-        'nacional': float(df[is_nacional][amount_col].sum()) if not df[is_nacional].empty else 0.0,
-        'exportacion': float(df[is_export][amount_col].sum()) if not df[is_export].empty else 0.0
-    }
-
 def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) -> dict[str, Any]:
+    month_str = current.strftime('%Y-%m')
+    comments_dict = {}
+    if 'document_comments' in dfs and not dfs['document_comments'].empty:
+        df_comm = dfs['document_comments'].copy()
+        if 'creado_en' in df_comm.columns:
+            df_comm = df_comm.sort_values(by='creado_en', ascending=True)
+        for _, row in df_comm.iterrows():
+            doc = row.get('documento')
+            if doc and pd.notna(doc):
+                comments_dict[doc] = row.get('comentario')
+
     docs = {name: aggregate_normalized_df(df, name) for name, df in dfs.items()}
     ofertas = docs['ofertas']
     pedidos = docs['pedidos']
@@ -1768,6 +1777,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
             },
             "conversion": ratio
         },
+        "comments": comments_dict,
         "forecast": {
             "budget": month_budget,
             "facturado": {
@@ -1847,9 +1857,30 @@ def build_report(files: dict[str, bytes | str]) -> dict[str, Any]:
     dfs = {name: ensure_types_normalized_df(df, name) for name, df in dfs.items()}
     current = detect_analysis_date()
     return build_report_from_data(dfs, current)
-def table_row(cells: list[str], header: bool=False) -> str:
+class RawHTML(str):
+    pass
+
+def table_row(cells: list[Any], header: bool=False) -> str:
     tag = 'th' if header else 'td'
-    return '<tr>' + ''.join((f'<{tag}>{html.escape(str(cell))}</{tag}>' for cell in cells)) + '</tr>'
+    def format_cell(c):
+        if isinstance(c, RawHTML):
+            return str(c)
+        return html.escape(str(c))
+    return '<tr>' + ''.join((f'<{tag}>{format_cell(cell)}</{tag}>' for cell in cells)) + '</tr>'
+
+def render_doc_with_note(doc: str, comments: dict) -> RawHTML:
+    escaped_doc = html.escape(str(doc))
+    note = comments.get(doc)
+    if note:
+        escaped_note = html.escape(note)
+        # Replacing simple quotes to avoid breaking onclick attribute
+        escaped_note_js = escaped_note.replace("'", "\\'")
+        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\', \'{escaped_note_js}\')" style="background:var(--accent); color:white; border:none; border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;" title="{escaped_note}">💬 Nota</button>'
+        return RawHTML(f'<div style="display:flex; align-items:center; gap:6px;"><span>{escaped_doc}</span>{btn}</div>')
+    else:
+        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\', \'\')" style="background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;">+ Nota</button>'
+        return RawHTML(f'<div style="display:flex; align-items:center; gap:6px;"><span>{escaped_doc}</span>{btn}</div>')
+
 def render_amount_bars(items: list[dict[str, Any]]) -> str:
     max_value = max([abs(float(item['value'])) for item in items] + [1.0])
     bars = []
@@ -1974,13 +2005,14 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
         }});
         </script>
         """
-def render_forecast_details(forecast: dict[str, Any]) -> str:
+def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
     # ***<module>.render_forecast_details: Failure: Different control flow
-    delivery_rows = [[r['documento'], fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast['top_albaranes']]
+    delivery_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast['top_albaranes']]
     delivery_table = f"<table>{table_row(['Albarán', 'Fecha', 'Cliente', 'Importe pendiente'], True)}{''.join((table_row(row) for row in delivery_rows))}</table>" if delivery_rows else '<p class=\'note\'>No hay albaranes pendientes de facturar localizados.</p>'
     
     order_tr_list = []
     for r in forecast['top_pedidos']:
+        doc_html = render_doc_with_note(r['documento'], comments)
         doc = r['documento']
         fecha = fmt_date(r.get('fecha_carga_prevista', r.get('fecha_necesaria')))
         base_fecha = 'Estimada' if r.get('fecha_carga_estimada') else 'Fecha Necesaria'
@@ -2005,7 +2037,7 @@ def render_forecast_details(forecast: dict[str, Any]) -> str:
         order_tr_list.append(
             f'<tr>'
             f'<td>{checkbox_html}</td>'
-            f'<td>{html.escape(str(doc))}</td>'
+            f'<td>{doc_html}</td>'
             f'<td>{html.escape(str(fecha))}</td>'
             f'<td>{badge_fecha_str}</td>'
             f'<td>{html.escape(str(cliente))}{articles_html}</td>'
@@ -2015,27 +2047,27 @@ def render_forecast_details(forecast: dict[str, Any]) -> str:
         )
     order_table = f"<table id='loadable-orders-table'><thead><tr><th>Previsto</th><th>Pedido</th><th>Fecha carga prevista</th><th>Base fecha</th><th>Cliente</th><th class='text-right'>Unid. pendientes</th><th class='text-right'>Importe pendiente</th></tr></thead><tbody>{''.join(order_tr_list)}</tbody></table>" if order_tr_list else '<p class=\'note\'>No hay pedidos pendientes con fecha real o estimada de disponibilidad hasta fin de mes.</p>'
 
-    older_order_rows = [[r['documento'], fmt_date(r['fecha']), 'Entregas parciales', r['razon_social'], f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.'), money(r['importe_pendiente'])] for r in forecast.get('top_pedidos_antiguos', [])]
+    older_order_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), 'Entregas parciales', r['razon_social'], f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.'), money(r['importe_pendiente'])] for r in forecast.get('top_pedidos_antiguos', [])]
     older_order_table = f"<table>{table_row(['Pedido', 'Fecha creación', 'Situación', 'Cliente', 'Unid. pendientes', 'Importe pendiente'], True)}{''.join((table_row(row) for row in older_order_rows))}</table>" if older_order_rows else '<p class=\'note\'>No hay pedidos antiguos en backlog localizados.</p>'
     
-    offer_rows = [[r['documento'], fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast['ofertas_aprobadas']['top']]
+    offer_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast['ofertas_aprobadas']['top']]
     offer_table = f"<table>{table_row(['Oferta', 'Fecha oferta', 'Entrega teórica', 'Ventana', 'Cliente', 'Importe'], True)}{''.join((table_row(row) for row in offer_rows))}</table>" if offer_rows else '<p class=\'note\'>No hay ofertas aprobadas localizadas con respaldo en pedidos.</p>'
     return f'\n      <h3>Listado completo de albaranes pendientes de facturar</h3>\n      {delivery_table}\n      <h3>Listado completo de pedidos fabricables/cargables este mes (&lt;= 1 mes)</h3>\n      {order_table}\n      <h3>Listado completo de pedidos antiguos de meses anteriores (Backlog / Entregas parciales)</h3>\n      {older_order_table}\n      <h3>Listado completo de ofertas aprobadas con entrega teórica +15 días</h3>\n      {offer_table}\n    '
-def render_delivery_schedule(schedule: list[dict[str, Any]]) -> str:
+def render_delivery_schedule(schedule: list[dict[str, Any]], comments: dict) -> str:
     if not schedule:
         return '<p class=\'note\'>No hay entregas planificadas en el calendario.</p>'
     else:
         rows = []
         for item in schedule:
             tipo = item['tipo']
-            doc = item['documento']
+            doc_html = render_doc_with_note(item['documento'], comments)
             cliente = item['cliente']
             creacion = fmt_date(item['fecha_creacion'])
             aceptacion = fmt_date(item['fecha_aceptacion']) if item['fecha_aceptacion'] is not None else '-'
             entrega_str = item['fecha_entrega_str']
             importe = money(item['importe'])
             tipo_badge = f'<span class=\'badge {tipo.lower()}\'>{tipo}</span>'
-            rows.append(f'\n          <tr>\n            <td>{tipo_badge}</td>\n            <td>{html.escape(str(doc))}</td>\n            <td>{html.escape(str(cliente))}</td>\n            <td>{creacion}</td>\n            <td>{aceptacion}</td>\n            <td><strong>{html.escape(entrega_str)}</strong></td>\n            <td class=\"text-right\">{html.escape(importe)}</td>\n          </tr>\n        ')
+            rows.append(f'\n          <tr>\n            <td>{tipo_badge}</td>\n            <td>{doc_html}</td>\n            <td>{html.escape(str(cliente))}</td>\n            <td>{creacion}</td>\n            <td>{aceptacion}</td>\n            <td><strong>{html.escape(entrega_str)}</strong></td>\n            <td class=\"text-right\">{html.escape(importe)}</td>\n          </tr>\n        ')
         return f"\n    <table>\n      <thead>\n        <tr>\n          <th>Tipo</th>\n          <th>Documento</th>\n          <th>Cliente</th>\n          <th>F. Creación</th>\n          <th>F. Aceptación</th>\n          <th>F. Entrega Planificada</th>\n          <th class=\"text-right\">Importe</th>\n        </tr>\n      </thead>\n      <tbody>\n        {''.join(rows)}\n      </tbody>\n    </table>\n    "
 def render_report(report: dict[str, Any] | None=None, error: str | None=None, selected_date: str | None=None, show_confirm: bool = False, selected_zona: str | None=None) -> str:
     if selected_date is None:
@@ -3081,7 +3113,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
             {render_budget_progress(report["charts"]["budget_progress"])}
             {render_amount_bars(report["charts"]["forecast_bridge"])}
             {forecast_table_html}
-            {render_forecast_details(forecast)}
+            {render_forecast_details(forecast, report.get("comments", {}))}
             <p class="note">Los pedidos cargables se valoran por ImporteBrutoPendiente. Las ofertas aprobadas se muestran aparte y no se suman para evitar duplicidad.</p>
           </section>
           <section class="panel">
@@ -3095,14 +3127,14 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         <div class="tab-content" id="calendario-entregas">
           <section class="panel">
             <h2>6. Calendario de Entregas</h2>
-            {render_delivery_schedule(report["delivery_schedule"])}
+            {render_delivery_schedule(report["delivery_schedule"], report.get("comments", {}))}
           </section>
         </div>
         
         <div class="tab-content" id="alertas-auditoria">
           <section class="panel">
             <h2>7. Alertas y Auditoría</h2>
-            {render_alerts(report["alerts"])}
+            {render_alerts(report["alerts"], report.get("comments", {}))}
           </section>
         </div>
         
@@ -3173,7 +3205,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         return report_html
 
 
-def render_alerts(alerts: dict[str, list[dict[str, Any]]], limit: int | None=None) -> str:
+def render_alerts(alerts: dict[str, list[dict[str, Any]]], comments: dict, limit: int | None=None) -> str:
     col1 = []
     col1.append('<div class=\'alert-section-title\'>Falta de Fecha Necesaria</div>')
     missing = alerts.get('missing_needed', [])
@@ -3182,11 +3214,13 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], limit: int | None=Non
         show_list = missing_sorted[:limit] if limit else missing_sorted
         cards_html = []
         for r in show_list:
+            doc = r['documento']
+            doc_html = render_doc_with_note(doc, comments)
             cards_html.append(f"""
             <div class="alert-card alert-danger">
               <div class="alert-header">
                 <span class="alert-badge badge-danger">Fecha Req.</span>
-                <span class="alert-doc">Pedido {html.escape(str(r['documento']))}</span>
+                <span class="alert-doc">Pedido {doc_html}</span>
               </div>
               <div class="alert-body">
                 <span class="alert-desc">{html.escape(r['razon_social'])}</span>
@@ -3208,11 +3242,12 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], limit: int | None=Non
         show_list = stale_sorted[:limit] if limit else stale_sorted
         cards_html = []
         for r in show_list:
+            doc_html = render_doc_with_note(r['documento'], comments)
             cards_html.append(f"""
             <div class="alert-card alert-warn">
               <div class="alert-header">
                 <span class="alert-badge badge-warn">Factura Pend.</span>
-                <span class="alert-doc">Albarán {html.escape(str(r['documento']))}</span>
+                <span class="alert-doc">Albarán {doc_html}</span>
               </div>
               <div class="alert-body">
                 <span class="alert-desc">{html.escape(r['razon_social'])}</span>
@@ -3234,11 +3269,12 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], limit: int | None=Non
         show_list = stagnant_sorted[:limit] if limit else stagnant_sorted
         cards_html = []
         for r in show_list:
+            doc_html = render_doc_with_note(r['documento'], comments)
             cards_html.append(f"""
             <div class="alert-card alert-info">
               <div class="alert-header">
                 <span class="alert-badge badge-info">Estancada</span>
-                <span class="alert-doc">Oferta {html.escape(str(r['documento']))}</span>
+                <span class="alert-doc">Oferta {doc_html}</span>
               </div>
               <div class="alert-body">
                 <span class="alert-desc">{html.escape(r['razon_social'])}</span>
@@ -3550,6 +3586,31 @@ class Handler(BaseHTTPRequestHandler):
             parsed_url = urllib.parse.urlparse(self.path)
             path = parsed_url.path
             print(f"[do_POST] Incoming POST request to {path}", flush=True)
+            if path == '/save-comment':
+                try:
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    post_data = self.rfile.read(content_length).decode('utf-8')
+                    data = json.loads(post_data)
+                    documento = data.get('documento')
+                    comentario = data.get('comentario')
+                    if not documento or not comentario:
+                        raise ValueError("Falta documento o comentario")
+                    if SUPABASE_ENABLED:
+                        supabase_request('document_comments', method='POST', data=[{
+                            'documento': documento,
+                            'comentario': comentario
+                        }])
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': True}).encode('utf-8'))
+                except Exception as e:
+                    print(f"Error saving comment: {e}")
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
             if path == '/save-pdf':
                 query = urllib.parse.parse_qs(parsed_url.query)
                 date_param = query.get('date', [None])[0] or get_default_report_date()
