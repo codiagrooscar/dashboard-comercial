@@ -9,6 +9,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"> -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <link href="https://cdn.jsdelivr.net/npm/simple-datatables@latest/dist/style.css" rel="stylesheet" type="text/css">
+  <script src="https://cdn.jsdelivr.net/npm/simple-datatables@latest" type="text/javascript"></script>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <style>
     :root {
       color-scheme: dark;
@@ -31,7 +37,7 @@
       margin: 0;
       font-family: 'Outfit', 'Inter', 'Segoe UI', Arial, sans-serif;
       background: var(--bg);
-      color: var(--ink);
+      color: var(--ink) !important;
       background-image: radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.02) 0%, transparent 40%),
                         radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.02) 0%, transparent 40%);
       background-attachment: fixed;
@@ -125,12 +131,12 @@
     }
     
     .nav-item:hover {
-      color: var(--ink);
+      color: var(--ink) !important;
       background: rgba(255, 255, 255, 0.03);
     }
     
     .nav-item.active {
-      color: var(--ink);
+      color: var(--ink) !important;
       background: var(--accent-gradient);
       box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
     }
@@ -243,7 +249,7 @@
       margin: 0 0 20px;
       font-size: 18px;
       font-weight: 700;
-      color: var(--ink);
+      color: var(--ink) !important;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -271,8 +277,8 @@
     }
     input[type=date] {
       background: #182235;
-      border: 1px solid var(--line);
-      color: var(--ink);
+      border: 1px solid var(--line) !important;
+      color: var(--ink) !important;
       padding: 12px 14px;
       border-radius: 8px;
       font-size: 14px;
@@ -331,7 +337,7 @@
       padding: 12px 22px;
       font-weight: 700;
       cursor: pointer;
-      color: var(--ink);
+      color: var(--ink) !important;
       background: var(--accent-gradient);
       box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
       transition: transform 0.1s ease, box-shadow 0.2s ease, opacity 0.2s ease;
@@ -364,7 +370,7 @@
       margin: 16px 0;
       border-radius: 8px;
       overflow: hidden;
-      border: 1px solid var(--line);
+      border: 1px solid var(--line) !important;
     }
     th, td {
       padding: 12px 14px;
@@ -373,7 +379,7 @@
     }
     th {
       background: #182536;
-      color: var(--ink);
+      color: var(--ink) !important;
       font-weight: 600;
       border-bottom: 2px solid var(--line);
       text-transform: uppercase;
@@ -383,7 +389,7 @@
     td {
       border-bottom: 1px solid var(--line);
       background: #141c2c;
-      color: var(--ink);
+      color: var(--ink) !important;
     }
     tr:last-child td {
       border-bottom: 0;
@@ -410,7 +416,7 @@
     .bar-label {
       width: 160px;
       flex-shrink: 0;
-      color: var(--ink);
+      color: var(--ink) !important;
       font-weight: 600;
       font-size: 13px;
       white-space: nowrap;
@@ -522,7 +528,7 @@
       }
     }
     .budget-row {
-      border: 1px solid var(--line);
+      border: 1px solid var(--line) !important;
       border-radius: 10px;
       padding: 18px;
       background: rgba(24, 34, 53, 0.4);
@@ -535,7 +541,7 @@
     }
     .budget-head strong {
       font-size: 14px;
-      color: var(--ink);
+      color: var(--ink) !important;
     }
     .budget-head span {
       font-size: 24px;
@@ -622,7 +628,7 @@
     }
     h3 {
       font-size: 15px;
-      color: var(--ink);
+      color: var(--ink) !important;
       margin: 24px 0 12px;
       font-weight: 600;
     }
@@ -659,7 +665,7 @@
     }
     .alert-card {
       background: rgba(24, 34, 53, 0.4);
-      border: 1px solid var(--line);
+      border: 1px solid var(--line) !important;
       border-radius: 8px;
       padding: 12px;
       display: flex;
@@ -711,7 +717,7 @@
     .alert-doc {
       font-size: 12px;
       font-weight: 600;
-      color: var(--ink);
+      color: var(--ink) !important;
     }
     .alert-body {
       display: flex;
@@ -729,7 +735,7 @@
     }
     .alert-info-val {
       font-size: 13px;
-      color: var(--ink);
+      color: var(--ink) !important;
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
@@ -1205,6 +1211,88 @@
     th.sortable-header:hover .sort-indicator {
       opacity: 0.8;
     }
+  
+    /* Custom DataTables Dark Theme */
+    .datatable-wrapper {
+        color: var(--ink) !important;
+    }
+    .datatable-selector, .datatable-input {
+        background-color: var(--panel) !important; outline: none;
+        color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 4px;
+        padding: 4px 8px;
+    }
+    .datatable-table > thead > tr > th {
+        border-bottom: 2px solid var(--line);
+    }
+    .datatable-table > tbody > tr > td {
+        border-bottom: 1px solid var(--line);
+    }
+    .datatable-pagination a {
+        color: var(--ink) !important;
+    }
+    .datatable-pagination .active a, .datatable-pagination .active a:focus, .datatable-pagination .active a:hover {
+        background-color: var(--accent);
+        cursor: pointer;
+    }
+    .datatable-pagination a:hover {
+        background-color: var(--line);
+    }
+  
+    /* Make sorting icons smaller and align better */
+    .datatable-sorter::before, .datatable-sorter::after {
+        border-left: 3px solid transparent !important;
+        border-right: 3px solid transparent !important;
+        right: 8px !important;
+    }
+    .datatable-sorter::before {
+        border-top: 4px solid var(--ink) !important;
+        bottom: 4px !important;
+    }
+    th > button.datatable-sorter {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 24px !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .datatable-sorter::after {
+        border-bottom: 4px solid var(--ink) !important;
+        top: 4px !important;
+    }
+    .datatable-ascending .datatable-sorter::after,
+    .datatable-descending .datatable-sorter::before {
+        opacity: 0.8 !important;
+    }
+  
+    /* Make sorting icons smaller and align better */
+    .datatable-sorter::before, .datatable-sorter::after {
+        border-left: 3px solid transparent !important;
+        border-right: 3px solid transparent !important;
+        right: 8px !important;
+    }
+    .datatable-sorter::before {
+        border-top: 4px solid var(--ink) !important;
+        bottom: 4px !important;
+    }
+    th > button.datatable-sorter {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 24px !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .datatable-sorter::after {
+        border-bottom: 4px solid var(--ink) !important;
+        top: 4px !important;
+    }
+    .datatable-ascending .datatable-sorter::after,
+    .datatable-descending .datatable-sorter::before {
+        opacity: 0.8 !important;
+    }
   </style>
 </head>
 <body>
@@ -1227,6 +1315,7 @@
             <input type="date" id="report-date-select" name="date" value="{selected_date}" onchange="this.form.submit()">
           </div>
         </form>
+        {zona_filter_html}
       </section>
 
       <nav class="nav-menu">
@@ -1292,6 +1381,11 @@
     </div>
   </div>
 
+  <link href="https://cdn.jsdelivr.net/npm/simple-datatables@latest/dist/style.css" rel="stylesheet" type="text/css">
+  <script src="https://cdn.jsdelivr.net/npm/simple-datatables@latest" type="text/javascript"></script>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <style>
     .modal-overlay {
       position: fixed;
@@ -1305,7 +1399,7 @@
     }
     .modal-content {
       background: var(--panel);
-      border: 1px solid var(--line);
+      border: 1px solid var(--line) !important;
       border-radius: 12px;
       padding: 24px;
       width: 100%;
@@ -1392,6 +1486,88 @@
       .bar-fill, .budget-fill {
         transition: none !important;
       }
+    }
+  
+    /* Custom DataTables Dark Theme */
+    .datatable-wrapper {
+        color: var(--ink) !important;
+    }
+    .datatable-selector, .datatable-input {
+        background-color: var(--panel) !important; outline: none;
+        color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 4px;
+        padding: 4px 8px;
+    }
+    .datatable-table > thead > tr > th {
+        border-bottom: 2px solid var(--line);
+    }
+    .datatable-table > tbody > tr > td {
+        border-bottom: 1px solid var(--line);
+    }
+    .datatable-pagination a {
+        color: var(--ink) !important;
+    }
+    .datatable-pagination .active a, .datatable-pagination .active a:focus, .datatable-pagination .active a:hover {
+        background-color: var(--accent);
+        cursor: pointer;
+    }
+    .datatable-pagination a:hover {
+        background-color: var(--line);
+    }
+  
+    /* Make sorting icons smaller and align better */
+    .datatable-sorter::before, .datatable-sorter::after {
+        border-left: 3px solid transparent !important;
+        border-right: 3px solid transparent !important;
+        right: 8px !important;
+    }
+    .datatable-sorter::before {
+        border-top: 4px solid var(--ink) !important;
+        bottom: 4px !important;
+    }
+    th > button.datatable-sorter {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 24px !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .datatable-sorter::after {
+        border-bottom: 4px solid var(--ink) !important;
+        top: 4px !important;
+    }
+    .datatable-ascending .datatable-sorter::after,
+    .datatable-descending .datatable-sorter::before {
+        opacity: 0.8 !important;
+    }
+  
+    /* Make sorting icons smaller and align better */
+    .datatable-sorter::before, .datatable-sorter::after {
+        border-left: 3px solid transparent !important;
+        border-right: 3px solid transparent !important;
+        right: 8px !important;
+    }
+    .datatable-sorter::before {
+        border-top: 4px solid var(--ink) !important;
+        bottom: 4px !important;
+    }
+    th > button.datatable-sorter {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 24px !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .datatable-sorter::after {
+        border-bottom: 4px solid var(--ink) !important;
+        top: 4px !important;
+    }
+    .datatable-ascending .datatable-sorter::after,
+    .datatable-descending .datatable-sorter::before {
+        opacity: 0.8 !important;
     }
   </style>
 
@@ -1696,7 +1872,7 @@
 
       // Habilitar ordenación en todas las tablas
       function makeTablesSortable() {
-        const tables = document.querySelectorAll("table");
+        const tables = document.querySelectorAll("table:not(.datatable)");
         tables.forEach(table => {
           // Normalizar estructura de la tabla si no tiene thead/tbody explícitos
           let thead = table.querySelector("thead");
@@ -2114,6 +2290,43 @@
       }
     });
   
+  </script>
+
+  <script>
+    // Initialize DataTables
+    function initDataTables() {
+        document.querySelectorAll('table.datatable').forEach(table => {
+            if (!table.classList.contains('dataTable-table')) {
+                new simpleDatatables.DataTable(table, {
+                    searchable: true,
+                    fixedHeight: false,
+                    perPage: 10,
+                    labels: {
+                        placeholder: "Buscar...",
+                        perPage: "filas por pág.",
+                        noRows: "No se encontraron resultados",
+                        info: "Mostrando {start} a {end} de {rows} entradas"
+                    }
+                });
+            }
+        });
+    }
+
+    // Call on first load
+    document.addEventListener('DOMContentLoaded', initDataTables);
+    // Call after HTMX swaps
+    document.addEventListener('htmx:afterSettle', initDataTables);
+
+    // Register PWA Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(registration => {
+          console.log('SW registered: ', registration);
+        }).catch(registrationError => {
+          console.log('SW registration failed: ', registrationError);
+        });
+      });
+    }
   </script>
 </body>
 </html>

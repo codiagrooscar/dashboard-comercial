@@ -630,7 +630,8 @@ def norm(value: Any) -> str:
     text = re.sub('[^a-zA-Z0-9]+', '', text).lower()
     return text
 def money(val: float) -> str:
-    return f"{int(round(val)):,} EUR".replace(',', '.')
+    formatted = f"{int(round(val)):,} EUR".replace(',', '.')
+    return formatted 
 def pct(value: float | None) -> str:
     if value is None:
         return 'N/D'
@@ -2036,9 +2037,20 @@ def render_delivery_schedule(schedule: list[dict[str, Any]]) -> str:
             tipo_badge = f'<span class=\'badge {tipo.lower()}\'>{tipo}</span>'
             rows.append(f'\n          <tr>\n            <td>{tipo_badge}</td>\n            <td>{html.escape(str(doc))}</td>\n            <td>{html.escape(str(cliente))}</td>\n            <td>{creacion}</td>\n            <td>{aceptacion}</td>\n            <td><strong>{html.escape(entrega_str)}</strong></td>\n            <td class=\"text-right\">{html.escape(importe)}</td>\n          </tr>\n        ')
         return f"\n    <table>\n      <thead>\n        <tr>\n          <th>Tipo</th>\n          <th>Documento</th>\n          <th>Cliente</th>\n          <th>F. Creación</th>\n          <th>F. Aceptación</th>\n          <th>F. Entrega Planificada</th>\n          <th class=\"text-right\">Importe</th>\n        </tr>\n      </thead>\n      <tbody>\n        {''.join(rows)}\n      </tbody>\n    </table>\n    "
-def render_report(report: dict[str, Any] | None=None, error: str | None=None, selected_date: str | None=None, show_confirm: bool = False) -> str:
+def render_report(report: dict[str, Any] | None=None, error: str | None=None, selected_date: str | None=None, show_confirm: bool = False, selected_zona: str | None=None) -> str:
     if selected_date is None:
         selected_date = get_default_report_date()
+        
+    zona_filter_html = f"""
+    <div style="margin-top: 10px; margin-bottom: 10px;">
+        <select id="zona-filter" onchange="window.location.href='/default?date={selected_date}&zona=' + this.value;" style="background: #182235; border: 1px solid var(--line) !important; color: var(--ink) !important; padding: 12px 14px; border-radius: 8px; font-size: 14px; font-family: inherit; width: 100%; transition: border-color 0.2s ease, box-shadow 0.2s ease; cursor: pointer;">
+            <option value="" {'selected' if not selected_zona else ''} style="background: #182235; color: var(--ink);">Todas las Zonas</option>
+            <option value="Nacional" {'selected' if selected_zona == 'Nacional' else ''} style="background: #182235; color: var(--ink);">Nacional</option>
+            <option value="Exportación" {'selected' if selected_zona == 'Exportación' else ''} style="background: #182235; color: var(--ink);">Exportación</option>
+        </select>
+    </div>
+    """
+    
     default_available = all((Path(path).exists() for path in DEFAULT_FILES.values()))
     
     import_form_html = f"""
@@ -2227,8 +2239,8 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         if client_list:
             cr = ""
             for c in client_list:
-                cr += f'<tr><td>{html.escape(str(c.get("cliente","")))}</td><td>{html.escape(str(c.get("razon_social","")))}</td><td>{html.escape(str(c.get("zona","-")))}</td><td>{money(c.get("facturado_ytd",0))}</td><td>{money(c.get("albaranes_pending",0))}</td><td>{money(c.get("pedidos_pending",0))}</td><td>{money(c.get("ofertas_pending",0))}</td><td><strong>{money(c.get("total_portfolio",0))}</strong></td></tr>'
-            client_table = f'<table><thead><tr><th>Cliente</th><th>Razón Social</th><th>Zona</th><th>Fact. YTD</th><th>Alb. Pend.</th><th>Ped. Pend.</th><th>Ofe. Abiertas</th><th>Total</th></tr></thead><tbody>{cr}</tbody></table>'
+                cr += f'<tr><td>{html.escape(str(c.get("cliente","")))}</td><td>{html.escape(str(c.get("razon_social","")))}</td><td>{html.escape(str(c.get("zona","-")))}</td><td class="text-right" data-order="{c.get("facturado_ytd",0)}">{money(c.get("facturado_ytd",0))}</td><td class="text-right" data-order="{c.get("albaranes_pending",0)}">{money(c.get("albaranes_pending",0))}</td><td class="text-right" data-order="{c.get("pedidos_pending",0)}">{money(c.get("pedidos_pending",0))}</td><td class="text-right" data-order="{c.get("ofertas_pending",0)}">{money(c.get("ofertas_pending",0))}</td><td class="text-right" data-order="{c.get("total_portfolio",0)}"><strong>{money(c.get("total_portfolio",0))}</strong></td></tr>'
+            client_table = f'<table class="datatable"><thead><tr><th>Cliente</th><th>Razón Social</th><th>Zona</th><th>Fact. YTD</th><th>Alb. Pend.</th><th>Ped. Pend.</th><th>Ofe. Abiertas</th><th>Total</th></tr></thead><tbody>{cr}</tbody></table>'
         else:
             client_table = "<p class='note'>No hay datos de clientes.</p>"
 
@@ -2237,10 +2249,11 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         if product_list:
             pr = ""
             for p in product_list:
-                units = f'{p.get("pedidos_unidades",0):,.0f}'.replace(",", ".")
+                raw_units = p.get("pedidos_unidades", 0)
+                units = f"<span style='display:none'>_{int(raw_units) + 1000000000:012d}</span>{raw_units:,.0f}".replace(",", ".")
                 clientes_html = f"<div style='font-size: 10.5px; color: var(--muted); margin-top: 4px;'>Top clientes: {html.escape(p.get('top_clientes', '-'))}</div>"
-                pr += f'<tr><td>{html.escape(str(p.get("articulo","")))}</td><td>{html.escape(str(p.get("descripcion","")))}{clientes_html}</td><td>{units}</td><td>{money(p.get("pedidos_importe",0))}</td><td>{money(p.get("ofertas_importe",0))}</td><td><strong>{money(p.get("total_importe",0))}</strong></td></tr>'
-            product_table = f'<table><thead><tr><th>Artículo</th><th>Descripción</th><th>Uds.</th><th>Imp. Pedidos</th><th>Imp. Ofertas</th><th>Total</th></tr></thead><tbody>{pr}</tbody></table>'
+                pr += f'<tr><td>{html.escape(str(p.get("articulo","")))}</td><td>{html.escape(str(p.get("descripcion","")))}{clientes_html}</td><td class="text-right">{units}</td><td class="text-right"><span style="display:none">_{int(p.get("pedidos_importe",0)) + 1000000000:012d}</span>{money(p.get("pedidos_importe",0))}</td><td class="text-right"><span style="display:none">_{int(p.get("ofertas_importe",0)) + 1000000000:012d}</span>{money(p.get("ofertas_importe",0))}</td><td class="text-right"><strong><span style="display:none">_{int(p.get("total_importe",0)) + 1000000000:012d}</span>{money(p.get("total_importe",0))}</strong></td></tr>'
+            product_table = f'<table class="datatable"><thead><tr><th>Artículo</th><th>Descripción</th><th>Uds.</th><th>Imp. Pedidos</th><th>Imp. Ofertas</th><th>Total</th></tr></thead><tbody>{pr}</tbody></table>'
         else:
             product_table = "<p class='note'>No hay productos en backlog.</p>"
 
@@ -2401,16 +2414,20 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                 if items:
                     rows = ""
                     for m in items:
+                        ped_sort = int(m.get('pedido', 0) + 1000000000)
+                        env_sort = int(m.get('stock_envasado', 0) + 1000000000)
+                        gra_sort = int(m.get('stock_granel', 0) + 1000000000)
                         if condition_fn:
                             # It's for necesidades
                             necesidad = m['pedido'] - m['stock_envasado'] - m['stock_granel']
-                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td><td class='text-right' style='color:var(--danger); font-weight:bold;'>{necesidad:,.0f}</td></tr>".replace(",", ".")
+                            nec_sort = int(necesidad + 1000000000)
+                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'><span style='display:none'>_{ped_sort:012d}</span>{m['pedido']:,.0f}</td><td class='text-right'><span style='display:none'>_{env_sort:012d}</span>{m['stock_envasado']:,.0f}</td><td class='text-right'><span style='display:none'>_{gra_sort:012d}</span>{m['stock_granel']:,.0f}</td><td class='text-right' style='color:var(--danger); font-weight:bold;'><span style='display:none'>_{nec_sort:012d}</span>{necesidad:,.0f}</td></tr>".replace(",", ".")
                         else:
                             # It's for stock general
-                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'>{m['pedido']:,.0f}</td><td class='text-right'>{m['stock_envasado']:,.0f}</td><td class='text-right'>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".")
+                            rows += f"<tr><td>{html.escape(str(m['codigo']))}</td><td>{html.escape(str(m['descripcion']))}</td><td class='text-right'><span style='display:none'>_{ped_sort:012d}</span>{m['pedido']:,.0f}</td><td class='text-right'><span style='display:none'>_{env_sort:012d}</span>{m['stock_envasado']:,.0f}</td><td class='text-right'><span style='display:none'>_{gra_sort:012d}</span>{m['stock_granel']:,.0f}</td></tr>".replace(",", ".")
                     
                     html_out += f"<h3 style='margin-top: 16px; margin-bottom: 8px;'>{tipo}</h3>"
-                    html_out += f"<table><thead><tr>{columns_html}</tr></thead><tbody>{rows}</tbody></table>"
+                    html_out += f"<table class='datatable'><thead><tr>{columns_html}</tr></thead><tbody>{rows}</tbody></table>"
             return html_out
 
         stock_metrics = report.get('stock_comparison', [])
@@ -3145,6 +3162,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
             html_template = template_path.read_text(encoding='utf-8')
             # Realizar reemplazos
             res = html_template.replace("{selected_date}", selected_date or "")
+            res = res.replace("{zona_filter_html}", zona_filter_html or "")
             res = res.replace("{CODIAGRO_LOGO_B64}", CODIAGRO_LOGO_B64 or "")
             res = res.replace("{report_html}", report_html or "")
             return res
@@ -3348,6 +3366,13 @@ def read_post_form(handler: BaseHTTPRequestHandler) -> MultipartForm:
     return MultipartForm()
 
 
+def filter_dfs_by_zona(dfs, zona):
+    if not zona or zona not in ['Nacional', 'Exportación']:
+        return
+    for k in ['ofertas', 'pedidos', 'albaranes', 'facturas']:
+        if k in dfs and 'zona' in dfs[k].columns:
+            dfs[k] = dfs[k][dfs[k]['zona'] == zona]
+
 class Handler(BaseHTTPRequestHandler):
     def send_html(self, body: str) -> None:
         encoded = body.encode('utf-8')
@@ -3372,6 +3397,7 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed_url.query)
         path = parsed_url.path
         date_param = query.get('date', [None])[0]
+        zona_param = query.get('zona', [None])[0]
         if date_param:
             if not re.match('^\\d{4}-\\d{2}-\\d{2}$', date_param):
                 date_param = get_default_report_date()
@@ -3391,6 +3417,7 @@ class Handler(BaseHTTPRequestHandler):
                             dfs = {name: parse_excel_to_normalized_df(source, name) for name, source in DEFAULT_FILES.items()}
                             dfs = {name: ensure_types_normalized_df(df, name) for name, df in dfs.items()}
                 if dfs:
+                    filter_dfs_by_zona(dfs, zona_param)
                     current = pd.Timestamp(date_param)
                     report = build_report_from_data(dfs, current)
                     excel_data = generate_excel_dashboard(dfs, report, date_param)
@@ -3499,23 +3526,25 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     dfs = load_report_data(date_param)
                     if dfs is not None:
+                        filter_dfs_by_zona(dfs, zona_param)
                         current = pd.Timestamp(date_param)
                         report = build_report_from_data(dfs, current)
-                        self.send_html(render_report(report=report, selected_date=date_param))
+                        self.send_html(render_report(report=report, selected_date=date_param, selected_zona=zona_param))
                     else:
                         if date_param == get_default_report_date() and all((Path(p).exists() for p in DEFAULT_FILES.values())):
                             dfs = {name: parse_excel_to_normalized_df(source, name) for name, source in DEFAULT_FILES.items()}
                             dfs = {name: ensure_types_normalized_df(df, name) for name, df in dfs.items()}
                             save_report_data(date_param, dfs)
+                            filter_dfs_by_zona(dfs, zona_param)
                             current = pd.Timestamp(date_param)
                             report = build_report_from_data(dfs, current)
-                            self.send_html(render_report(report=report, selected_date=date_param))
+                            self.send_html(render_report(report=report, selected_date=date_param, selected_zona=zona_param))
                         else:
-                            self.send_html(render_report(report=None, selected_date=date_param))
+                            self.send_html(render_report(report=None, selected_date=date_param, selected_zona=zona_param))
                 except Exception as exc:
-                    self.send_html(render_report(error=str(exc), selected_date=date_param))
+                    self.send_html(render_report(error=str(exc), selected_date=date_param, selected_zona=zona_param))
             else:
-                self.send_html(render_report(selected_date=date_param))
+                self.send_html(render_report(selected_date=date_param, selected_zona=zona_param))
     def do_POST(self) -> None:
         try:
             parsed_url = urllib.parse.urlparse(self.path)
