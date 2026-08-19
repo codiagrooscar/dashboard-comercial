@@ -742,7 +742,8 @@
     .pdf-page-break {
       display: none;
     }
-    .pdf-only-header {
+    .pdf-only-header,
+    .pdf-only-link {
       display: none !important;
     }
      body.pdf-generating {
@@ -814,6 +815,12 @@
       .pdf-mode .header-actions,
       .pdf-mode .actions {
         display: none !important;
+      }
+      .pdf-mode .pdf-only-link {
+        display: block !important;
+        margin: 6px 0 20px 0 !important;
+        text-align: center !important;
+        clear: both !important;
       }
       /* Page 1 Header alignment using float */
       .pdf-mode .pdf-header {
@@ -1299,9 +1306,11 @@
   <!-- Comment Modal -->
   <div id="commentModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:9999;">
     <div class="modal-content" style="background:var(--bg); border-radius:12px; padding:24px; width:400px; max-width:90%; border:1px solid var(--line); box-shadow:0 10px 25px rgba(0,0,0,0.2);">
-      <h3 style="margin-top:0; margin-bottom:16px; color:var(--ink);">Añadir Nota a <span id="commentDocLabel" style="color:var(--accent);"></span></h3>
-      <textarea id="commentText" rows="4" style="width:100%; padding:12px; border-radius:6px; border:1px solid var(--line); background:var(--bg-card); color:var(--ink); font-family:inherit; resize:vertical; margin-bottom:16px;" placeholder="Escribe tu nota aquí..."></textarea>
+      <h3 style="margin-top:0; margin-bottom:16px; color:var(--ink);">Notas de <span id="commentDocLabel" style="color:var(--accent);"></span></h3>
+      <div id="commentHistory" style="max-height:200px; overflow-y:auto; margin-bottom:16px; display:flex; flex-direction:column; gap:8px;"></div>
+      <textarea id="commentText" rows="3" style="width:100%; padding:12px; border-radius:6px; border:1px solid var(--line); background:var(--bg-card); color:var(--ink); font-family:inherit; resize:vertical; margin-bottom:16px;" placeholder="Escribe una nueva nota aquí..."></textarea>
       <div style="display:flex; justify-content:flex-end; gap:12px;">
+        <button id="deleteCommentBtn" onclick="deleteComment()" style="background:#ef4444; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; display:none; margin-right:auto;">Borrar Todo</button>
         <button onclick="closeCommentModal()" style="background:transparent; border:1px solid var(--line); color:var(--text); padding:8px 16px; border-radius:6px; cursor:pointer;">Cancelar</button>
         <button onclick="saveComment()" style="background:var(--accent); color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer;">Guardar Nota</button>
       </div>
@@ -1327,6 +1336,7 @@
           </div>
         </form>
         {zona_filter_html}
+        {client_filter_html}
       </section>
 
       <nav class="nav-menu">
@@ -1351,8 +1361,17 @@
         <button class="nav-item" onclick="switchTab('produccion-dashboard')" id="nav-produccion-dashboard">
           <span class="nav-icon">🏭</span> Producción
         </button>
+        <button class="nav-item" onclick="switchTab('rentabilidad-margenes')" id="nav-rentabilidad-margenes">
+          <span class="nav-icon">💰</span> Rentabilidad y Márgenes
+        </button>
+        <button class="nav-item" onclick="switchTab('cobros-riesgo')" id="nav-cobros-riesgo">
+          <span class="nav-icon">🏦</span> Cobros y Riesgo
+        </button>
+        <button class="nav-item" onclick="switchTab('aprovisionamiento-packaging')" id="nav-aprovisionamiento-packaging">
+          <span class="nav-icon">📦</span> Packaging y MP
+        </button>
         <button class="nav-item" onclick="switchTab('stock')" id="nav-stock">
-          <span class="nav-icon">📦</span> Stock
+          <span class="nav-icon">📊</span> Stock
         </button>
         <button class="nav-item" onclick="switchTab('importar-datos')" id="nav-importar-datos">
           <span class="nav-icon">📁</span> Importar Archivos
@@ -1366,31 +1385,13 @@
     </aside>
 
     <main class="main-content">
+      {kpi_cards_html}
       <div id="main-report-container">
         {report_html}
       </div>
     </main>
   </div>
 
-  <!-- Modal para envío de Email -->
-  <div id="email-modal" class="modal-overlay" style="display: none;">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2>📧 Enviar Resumen por Email</h2>
-        <button class="close-btn" onclick="closeEmailModal()">&times;</button>
-      </div>
-      <form id="email-form" onsubmit="sendEmail(event)">
-        <div class="form-group" style="margin-bottom: 20px;">
-          <label for="dest-email">Correo del Destinatario:</label>
-          <input type="email" id="dest-email" required placeholder="ejemplo@empresa.com" style="background:#182235; border:1px solid var(--line); color:var(--ink); padding:10px; border-radius:6px; width:100%;">
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="secondary" onclick="closeEmailModal()">Cancelar</button>
-          <button type="submit" id="send-email-btn">📤 Enviar Correo</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <link href="https://cdn.jsdelivr.net/npm/simple-datatables@latest/dist/style.css" rel="stylesheet" type="text/css">
   <script src="https://cdn.jsdelivr.net/npm/simple-datatables@latest" type="text/javascript"></script>
@@ -1663,7 +1664,7 @@
       if (!element) {
         if (btn) {
           btn.disabled = false;
-          btn.innerHTML = '📄 Descargar PDF (v7)';
+          btn.innerHTML = '📄 Descargar PDF';
         }
         return;
       }
@@ -1728,7 +1729,7 @@
         document.body.classList.remove("pdf-generating");
         if (btn) {
           btn.disabled = false;
-          btn.innerHTML = '📄 Descargar PDF (v7)';
+          btn.innerHTML = '📄 Descargar PDF';
         }
       }
     }
@@ -1820,11 +1821,47 @@
       }
     }
 
+    window.commentsData = {comments_json};
+
     let currentCommentDoc = null;
-    function openCommentModal(docId, existingNote) {
+    function openCommentModal(docId) {
       currentCommentDoc = docId;
       document.getElementById('commentDocLabel').innerText = docId;
-      document.getElementById('commentText').value = existingNote || "";
+      document.getElementById('commentText').value = "";
+      
+      const historyContainer = document.getElementById('commentHistory');
+      historyContainer.innerHTML = "";
+      const notes = window.commentsData[docId] || [];
+      
+      if (notes.length > 0) {
+        notes.forEach(note => {
+          const div = document.createElement('div');
+          div.style.cssText = "background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:4px; position:relative;";
+          
+          // Delete button for single comment
+          const delBtn = document.createElement('button');
+          delBtn.innerHTML = "✖";
+          delBtn.style.cssText = "position:absolute; top:8px; right:8px; background:none; border:none; color:#ef4444; cursor:pointer; font-size:12px; padding:2px;";
+          delBtn.onclick = () => deleteSingleComment(note.id);
+          div.appendChild(delBtn);
+          
+          const dateSpan = document.createElement('span');
+          dateSpan.style.cssText = "font-size:11px; color:var(--muted);";
+          dateSpan.innerText = note.creado_en ? new Date(note.creado_en).toLocaleString() : "Fecha desconocida";
+          div.appendChild(dateSpan);
+          
+          const textSpan = document.createElement('span');
+          textSpan.style.cssText = "font-size:13px; color:var(--text); white-space:pre-wrap;";
+          textSpan.innerText = note.comentario;
+          div.appendChild(textSpan);
+          
+          historyContainer.appendChild(div);
+        });
+        document.getElementById('deleteCommentBtn').style.display = "block";
+      } else {
+        document.getElementById('deleteCommentBtn').style.display = "none";
+      }
+      
       document.getElementById('commentModal').style.display = 'flex';
     }
     
@@ -1836,6 +1873,7 @@
     async function saveComment() {
       if (!currentCommentDoc) return;
       const text = document.getElementById('commentText').value;
+      if (!text.trim()) return;
       const btn = document.querySelector('button[onclick="saveComment()"]');
       const originalText = btn.innerText;
       btn.innerText = "Guardando...";
@@ -1848,7 +1886,6 @@
         const result = await response.json();
         if (result.success) {
           closeCommentModal();
-          // Reload page to reflect changes or update inline. We'll just reload.
           window.location.reload();
         } else {
           alert("Error: " + result.error);
@@ -1857,6 +1894,54 @@
         alert("Error: " + err.message);
       } finally {
         btn.innerText = originalText;
+      }
+    }
+
+    async function deleteComment() {
+      if (!currentCommentDoc) return;
+      if (!confirm("¿Seguro que quieres eliminar TODO el historial de este documento?")) return;
+      
+      const btn = document.getElementById('deleteCommentBtn');
+      const originalText = btn.innerText;
+      btn.innerText = "Borrando...";
+      try {
+        const response = await fetch('/delete-comment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documento: currentCommentDoc })
+        });
+        const result = await response.json();
+        if (result.success) {
+          closeCommentModal();
+          window.location.reload();
+        } else {
+          alert("Error: " + result.error);
+        }
+      } catch(err) {
+        alert("Error: " + err.message);
+      } finally {
+        btn.innerText = originalText;
+      }
+    }
+    
+    async function deleteSingleComment(commentId) {
+      if (!confirm("¿Seguro que quieres borrar esta nota específica?")) return;
+      
+      try {
+        const response = await fetch('/delete-comment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: commentId })
+        });
+        const result = await response.json();
+        if (result.success) {
+          closeCommentModal();
+          window.location.reload();
+        } else {
+          alert("Error: " + result.error);
+        }
+      } catch(err) {
+        alert("Error: " + err.message);
       }
     }
 
@@ -1901,7 +1986,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       // Cargar pestaña persistida o por defecto
       const savedTab = localStorage.getItem("selectedTab");
-      const validTabs = ["resumen-ejecutivo", "resumen-diario", "previsiones-cierre", "calendario-entregas", "alertas-auditoria", "cartera-comparativas", "produccion-dashboard", "importar-datos"];
+      const validTabs = ["resumen-ejecutivo", "resumen-diario", "previsiones-cierre", "calendario-entregas", "alertas-auditoria", "cartera-comparativas", "produccion-dashboard", "rentabilidad-margenes", "cobros-riesgo", "aprovisionamiento-packaging", "stock", "importar-datos"];
       if (savedTab && validTabs.includes(savedTab) && document.getElementById(savedTab)) {
         switchTab(savedTab);
       } else {
@@ -2165,8 +2250,22 @@
         const albaranes = parseFloat(rowAlbaranes ? rowAlbaranes.getAttribute('data-raw') : 0) || 0;
         const antiguos = parseFloat(rowAntiguos ? rowAntiguos.getAttribute('data-raw') : 0) || 0;
 
-        // Recalcular
-        const totalForecast = facturado + albaranes + checkedAmount + antiguos;
+        // Leer simuladores (si existen)
+        const simBacklogInput = document.getElementById('sim-backlog');
+        const simOfertasInput = document.getElementById('sim-ofertas');
+        const pctBacklog = simBacklogInput ? (parseFloat(simBacklogInput.value) / 100) : 1;
+        const pctOfertas = simOfertasInput ? (parseFloat(simOfertasInput.value) / 100) : 1;
+        
+        // El Backlog Antiguo se ve afectado por pctBacklog
+        const antiguosSimulados = antiguos * pctBacklog;
+
+        // Leer ofertas aprobadas (si están en la tabla, aunque normalmente no se suman al total_forecast para evitar duplicidad)
+        const rowOfertas = summaryTable.querySelector('tr[data-row="ofertas-aprobadas"] .val');
+        const ofertas = parseFloat(rowOfertas ? rowOfertas.getAttribute('data-raw') : 0) || 0;
+        const ofertasSimuladas = ofertas * pctOfertas;
+        const addOfertas = simOfertasInput ? ofertasSimuladas : 0;
+        
+        const totalForecast = facturado + albaranes + checkedAmount + antiguosSimulados + addOfertas;
         const compliance = budget ? (totalForecast / budget) : 0;
         const gap = totalForecast - budget;
 
@@ -2179,6 +2278,16 @@
         }
         if (rowCargablesQty) {
           rowCargablesQty.textContent = checkedCount.toString();
+        }
+
+        // Actualizar visualmente la fila de pedidos antiguos simulados
+        if (rowAntiguos && simBacklogInput) {
+            rowAntiguos.textContent = formatMoney(antiguosSimulados) + (pctBacklog < 1 ? ` (simulado ${simBacklogInput.value}%)` : '');
+        }
+        
+        // Actualizar visualmente la fila de ofertas simuladas
+        if (rowOfertas && simOfertasInput) {
+            rowOfertas.textContent = formatMoney(ofertasSimuladas) + (pctOfertas > 0 ? ` (simulado ${simOfertasInput.value}%)` : '');
         }
 
         const rowEstimacionVal = summaryTable.querySelector('tr[data-row="estimacion"] .val');
@@ -2195,6 +2304,16 @@
         const rowGapVal = summaryTable.querySelector('tr[data-row="gap"] .val');
         if (rowGapVal) {
           rowGapVal.textContent = formatMoney(gap);
+        }
+        
+        // Actualizar Top KPIs
+        const kpiEstimacion = document.getElementById('kpi-estimacion-cierre-value');
+        if (kpiEstimacion) kpiEstimacion.textContent = formatMoney(totalForecast);
+        const kpiGap = document.getElementById('kpi-brecha-gap-value');
+        if (kpiGap) {
+            const displayGap = budget - totalForecast;
+            kpiGap.textContent = formatMoney(Math.max(0, displayGap));
+            kpiGap.style.color = displayGap <= 0 ? 'var(--success)' : 'var(--danger)';
         }
 
         // 2. Actualizar barra de progreso #budget-esperado (pestaña Previsiones y Cierre)
@@ -2214,7 +2333,7 @@
         }
 
         // 3. Actualizar gráfico de barras (bridge chart) en Previsiones y Cierre
-        const maxBarVal = Math.max(facturado, albaranes, checkedAmount, antiguos, totalForecast, 1.0);
+        const maxBarVal = Math.max(facturado, albaranes, checkedAmount, antiguosSimulados, totalForecast, 1.0);
         const barFacturado = document.querySelector('.bar-row[data-bar="1-facturado"]');
         const barAlbaranes = document.querySelector('.bar-row[data-bar="2-albaranes-pend"]');
         const barCargables = document.querySelector('.bar-row[data-bar="3-pedidos-cargables"]');
@@ -2231,10 +2350,15 @@
           if (fillNac || fillExp) {
              const nac = parseFloat(el.getAttribute('data-nac')) || 0;
              const exp = parseFloat(el.getAttribute('data-exp')) || 0;
-             if (fillNac) fillNac.style.width = (nac / maxBarVal * 100) + '%';
-             if (fillExp) fillExp.style.width = (exp / maxBarVal * 100) + '%';
+             // Here we could scale nac/exp by the percentage, but to keep it simple, we just scale visually.
+             const scale = val / (parseFloat(el.getAttribute('data-raw')) || 1);
+             const scaledNac = nac * scale;
+             const scaledExp = exp * scale;
+             
+             if (fillNac) fillNac.style.width = (scaledNac / maxBarVal * 100) + '%';
+             if (fillExp) fillExp.style.width = (scaledExp / maxBarVal * 100) + '%';
              const subtext = el.querySelector('.split-subtext');
-             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(scaledNac)} | Exp: ${formatMoney(scaledExp)}`;
           } else {
              const fill = el.querySelector('.bar-fill');
              if (fill) fill.style.width = Math.max(2, (Math.abs(val) / maxBarVal * 100)) + '%';
@@ -2244,7 +2368,7 @@
         updateBarRow(barFacturado, facturado);
         updateBarRow(barAlbaranes, albaranes);
         updateBarRow(barCargables, checkedAmount);
-        updateBarRow(barAntiguos, antiguos);
+        updateBarRow(barAntiguos, antiguosSimulados);
         updateBarRow(barEstimacion, totalForecast);
 
         // 4. Actualizar barra de progreso #executive-budget-esperado (Resumen Ejecutivo)
@@ -2281,12 +2405,17 @@
           if (fillNac || fillExp) {
              const nac = parseFloat(el.getAttribute('data-nac')) || 0;
              const exp = parseFloat(el.getAttribute('data-exp')) || 0;
-             const widthNac = totalForecast ? (nac / totalForecast * 100) : 0;
-             const widthExp = totalForecast ? (exp / totalForecast * 100) : 0;
+             
+             const scale = val / (parseFloat(el.getAttribute('data-raw')) || 1);
+             const scaledNac = nac * scale;
+             const scaledExp = exp * scale;
+             
+             const widthNac = totalForecast ? (scaledNac / totalForecast * 100) : 0;
+             const widthExp = totalForecast ? (scaledExp / totalForecast * 100) : 0;
              if (fillNac) fillNac.style.width = widthNac + '%';
              if (fillExp) fillExp.style.width = widthExp + '%';
              const subtext = el.querySelector('.split-subtext');
-             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(scaledNac)} | Exp: ${formatMoney(scaledExp)}`;
           } else {
              const fill = el.querySelector('.bar-fill');
              if (fill) {
@@ -2303,6 +2432,35 @@
         if (execBarEstimacion) {
           const valText = execBarEstimacion.querySelector('.bar-value');
           if (valText) valText.textContent = formatMoney(totalForecast);
+        }
+
+        // 6. Actualizar KPI Card de Carga Pendiente
+        const kpiCargaPendiente = document.getElementById('kpi-carga-pendiente-value');
+        if (kpiCargaPendiente) {
+          kpiCargaPendiente.textContent = formatMoney(albaranes + checkedAmount);
+        }
+
+        // 7. Actualizar el sumatorio de la tabla local
+        const cargablesTotalSum = document.getElementById('cargables-total-sum');
+        if (cargablesTotalSum) {
+          cargablesTotalSum.textContent = formatMoney(checkedAmount);
+        }
+
+        // 8. Actualizar KPIs nuevos
+        const kpiEstimacionCierre = document.getElementById('kpi-estimacion-cierre-value');
+        if (kpiEstimacionCierre) {
+          kpiEstimacionCierre.textContent = formatMoney(facturado + albaranes + checkedAmount);
+        }
+
+        const kpiBrechaGap = document.getElementById('kpi-brecha-gap-value');
+        if (kpiBrechaGap) {
+          const currentGap = Math.max(0, budget - (facturado + albaranes + checkedAmount));
+          kpiBrechaGap.textContent = formatMoney(currentGap);
+          if (currentGap <= 0) {
+            kpiBrechaGap.style.color = 'var(--success)';
+          } else {
+            kpiBrechaGap.style.color = 'var(--danger)';
+          }
         }
       }
 
@@ -2349,7 +2507,7 @@
     function initDataTables() {
         document.querySelectorAll('table.datatable').forEach(table => {
             if (!table.classList.contains('dataTable-table')) {
-                new simpleDatatables.DataTable(table, {
+                const dt = new simpleDatatables.DataTable(table, {
                     searchable: true,
                     fixedHeight: false,
                     perPage: 10,
@@ -2360,8 +2518,40 @@
                         info: "Mostrando {start} a {end} de {rows} entradas"
                     }
                 });
+                table.dtInstance = dt;
             }
         });
+    }
+
+    function filterByClient(text) {
+        const searchText = text.toLowerCase().trim();
+        const isClear = (searchText === "" || searchText === "mostrar todos");
+
+        // Filtrar DataTables
+        document.querySelectorAll('table.datatable').forEach(t => {
+            if (t.dtInstance) {
+                t.dtInstance.search(isClear ? "" : searchText);
+            }
+        });
+        
+        // Filtrar tablas normales
+        document.querySelectorAll('table:not(.datatable)').forEach(t => {
+            const rows = t.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                const rowText = row.textContent.toLowerCase();
+                if (isClear) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = rowText.includes(searchText) ? '' : 'none';
+                }
+            });
+        });
+
+        // Limpiar el input si eligió "Mostrar todos"
+        if (searchText === "mostrar todos") {
+            const input = document.getElementById('client-filter-input');
+            if (input) input.value = "";
+        }
     }
 
     // Call on first load
