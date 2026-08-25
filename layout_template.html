@@ -1367,9 +1367,6 @@
         <button class="nav-item" onclick="switchTab('cobros-riesgo')" id="nav-cobros-riesgo">
           <span class="nav-icon">🏦</span> Cobros y Riesgo
         </button>
-        <button class="nav-item" onclick="switchTab('aprovisionamiento-packaging')" id="nav-aprovisionamiento-packaging">
-          <span class="nav-icon">📦</span> Packaging y MP
-        </button>
         <button class="nav-item" onclick="switchTab('stock')" id="nav-stock">
           <span class="nav-icon">📊</span> Stock
         </button>
@@ -1986,7 +1983,7 @@
     document.addEventListener("DOMContentLoaded", () => {
       // Cargar pestaña persistida o por defecto
       const savedTab = localStorage.getItem("selectedTab");
-      const validTabs = ["resumen-ejecutivo", "resumen-diario", "previsiones-cierre", "calendario-entregas", "alertas-auditoria", "cartera-comparativas", "produccion-dashboard", "rentabilidad-margenes", "cobros-riesgo", "aprovisionamiento-packaging", "stock", "importar-datos"];
+      const validTabs = ["resumen-ejecutivo", "resumen-diario", "previsiones-cierre", "calendario-entregas", "alertas-auditoria", "cartera-comparativas", "produccion-dashboard", "rentabilidad-margenes", "cobros-riesgo", "stock", "importar-datos"];
       if (savedTab && validTabs.includes(savedTab) && document.getElementById(savedTab)) {
         switchTab(savedTab);
       } else {

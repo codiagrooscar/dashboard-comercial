@@ -4937,7 +4937,6 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         {produccion_html}
         {render_profitability_tab(report.get("profitability", {}), current)}
         {render_receivables_tab(report.get("receivables_risk", {}), current)}
-        {render_packaging_tab(report.get("packaging_status", {}), current)}
         {stock_html}
         {import_form_html}
         """
@@ -4969,9 +4968,6 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
         </div>
         <div class="tab-content" id="cobros-riesgo">
           <section class="panel empty-state"><div class="empty-icon">🏦</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
-        </div>
-        <div class="tab-content" id="aprovisionamiento-packaging">
-          <section class="panel empty-state"><div class="empty-icon">📦</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
         </div>
         <div class="tab-content" id="stock">
           <section class="panel empty-state"><div class="empty-icon">📊</div><h2>Sin datos</h2><p>Selecciona una fecha o sube archivos en Importación.</p></section>
