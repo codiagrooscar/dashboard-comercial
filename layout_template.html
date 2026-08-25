@@ -2334,13 +2334,27 @@
 
         // 3. Actualizar gráfico de barras (bridge chart) en Previsiones y Cierre
         const maxBarVal = Math.max(facturado, albaranes, checkedAmount, antiguosSimulados, totalForecast, 1.0);
-        const barFacturado = document.querySelector('.bar-row[data-bar="1-facturado"]');
-        const barAlbaranes = document.querySelector('.bar-row[data-bar="2-albaranes-pend"]');
-        const barCargables = document.querySelector('.bar-row[data-bar="3-pedidos-cargables"]');
-        const barAntiguos = document.querySelector('.bar-row[data-bar="4-backlog-antiguo"]');
-        const barEstimacion = document.querySelector('.bar-row[data-bar="5-estimacin-cierre"]');
+        const barFacturado = document.querySelector('.bar-row[data-bar="1-facturado"]') || document.querySelector('.bar-row[data-bar="facturadoreal"]');
+        const barAlbaranes = document.querySelector('.bar-row[data-bar="2-albaranes-pend"]') || document.querySelector('.bar-row[data-bar="albaranespendientes"]');
+        const barCargables = document.querySelector('.bar-row[data-bar="3-pedidos-cargables"]') || document.querySelector('.bar-row[data-bar="pedidoscargablesrecientes"]');
+        const barAntiguos = document.querySelector('.bar-row[data-bar="4-backlog-antiguo"]') || document.querySelector('.bar-row[data-bar="pedidosantiguosbacklog"]');
+        const barEstimacion = document.querySelector('.bar-row[data-bar="5-estimacin-cierre"]') || document.querySelector('.bar-row[data-bar="5-estimacion-cierre"]') || document.querySelector('.bar-row[data-bar="estimacioncierre"]');
 
-        const updateBarRow = (el, val) => {
+        const facturadoNac = parseFloat(rowFacturado?.getAttribute('data-nac')) || parseFloat(barFacturado?.getAttribute('data-nac')) || 0;
+        const facturadoExp = parseFloat(rowFacturado?.getAttribute('data-exp')) || parseFloat(barFacturado?.getAttribute('data-exp')) || 0;
+
+        const albaranesNac = parseFloat(rowAlbaranes?.getAttribute('data-nac')) || parseFloat(barAlbaranes?.getAttribute('data-nac')) || 0;
+        const albaranesExp = parseFloat(rowAlbaranes?.getAttribute('data-exp')) || parseFloat(barAlbaranes?.getAttribute('data-exp')) || 0;
+
+        const antiguosNacBase = parseFloat(rowAntiguos?.getAttribute('data-nac')) || parseFloat(barAntiguos?.getAttribute('data-nac')) || 0;
+        const antiguosExpBase = parseFloat(rowAntiguos?.getAttribute('data-exp')) || parseFloat(barAntiguos?.getAttribute('data-exp')) || 0;
+        const antiguosNac = antiguosNacBase * pctBacklog;
+        const antiguosExp = antiguosExpBase * pctBacklog;
+
+        const estimacionNac = facturadoNac + albaranesNac + checkedNac + antiguosNac;
+        const estimacionExp = facturadoExp + albaranesExp + checkedExp + antiguosExp;
+
+        const updateBarRow = (el, val, forceNac, forceExp) => {
           if (!el) return;
           const valText = el.querySelector('.bar-value');
           if (valText) valText.textContent = formatMoney(val);
@@ -2348,28 +2362,31 @@
           const fillNac = el.querySelector('.bar-fill.nac');
           const fillExp = el.querySelector('.bar-fill.exp');
           if (fillNac || fillExp) {
-             const nac = parseFloat(el.getAttribute('data-nac')) || 0;
-             const exp = parseFloat(el.getAttribute('data-exp')) || 0;
-             // Here we could scale nac/exp by the percentage, but to keep it simple, we just scale visually.
-             const scale = val / (parseFloat(el.getAttribute('data-raw')) || 1);
-             const scaledNac = nac * scale;
-             const scaledExp = exp * scale;
+             let nac = (forceNac !== undefined) ? forceNac : (parseFloat(el.getAttribute('data-nac')) || 0);
+             let exp = (forceExp !== undefined) ? forceExp : (parseFloat(el.getAttribute('data-exp')) || 0);
              
-             if (fillNac) fillNac.style.width = (scaledNac / maxBarVal * 100) + '%';
-             if (fillExp) fillExp.style.width = (scaledExp / maxBarVal * 100) + '%';
+             if (forceNac === undefined && forceExp === undefined) {
+               const raw = parseFloat(el.getAttribute('data-raw')) || (nac + exp) || 0;
+               const scale = (raw > 0) ? (val / raw) : 1;
+               nac = nac * scale;
+               exp = exp * scale;
+             }
+             
+             if (fillNac) fillNac.style.width = (maxBarVal > 0 ? (nac / maxBarVal * 100) : 0) + '%';
+             if (fillExp) fillExp.style.width = (maxBarVal > 0 ? (exp / maxBarVal * 100) : 0) + '%';
              const subtext = el.querySelector('.split-subtext');
-             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(scaledNac)} | Exp: ${formatMoney(scaledExp)}`;
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
           } else {
              const fill = el.querySelector('.bar-fill');
              if (fill) fill.style.width = Math.max(2, (Math.abs(val) / maxBarVal * 100)) + '%';
           }
         };
 
-        updateBarRow(barFacturado, facturado);
-        updateBarRow(barAlbaranes, albaranes);
-        updateBarRow(barCargables, checkedAmount);
-        updateBarRow(barAntiguos, antiguosSimulados);
-        updateBarRow(barEstimacion, totalForecast);
+        updateBarRow(barFacturado, facturado, facturadoNac, facturadoExp);
+        updateBarRow(barAlbaranes, albaranes, albaranesNac, albaranesExp);
+        updateBarRow(barCargables, checkedAmount, checkedNac, checkedExp);
+        updateBarRow(barAntiguos, antiguosSimulados, antiguosNac, antiguosExp);
+        updateBarRow(barEstimacion, totalForecast, estimacionNac, estimacionExp);
 
         // 4. Actualizar barra de progreso #executive-budget-esperado (Resumen Ejecutivo)
         const execBudgetCard = document.getElementById('executive-budget-esperado');
@@ -2395,7 +2412,7 @@
         const execBarCargables = document.getElementById('exec-bar-pedidos-cargables');
         const execBarEstimacion = document.getElementById('exec-bar-estimacion-total');
 
-        const updateExecBar = (el, val) => {
+        const updateExecBar = (el, val, forceNac, forceExp) => {
           if (!el) return;
           const valText = el.querySelector('.bar-value');
           if (valText) valText.textContent = formatMoney(val);
@@ -2403,19 +2420,22 @@
           const fillNac = el.querySelector('.bar-fill.nac');
           const fillExp = el.querySelector('.bar-fill.exp');
           if (fillNac || fillExp) {
-             const nac = parseFloat(el.getAttribute('data-nac')) || 0;
-             const exp = parseFloat(el.getAttribute('data-exp')) || 0;
+             let nac = (forceNac !== undefined) ? forceNac : (parseFloat(el.getAttribute('data-nac')) || 0);
+             let exp = (forceExp !== undefined) ? forceExp : (parseFloat(el.getAttribute('data-exp')) || 0);
              
-             const scale = val / (parseFloat(el.getAttribute('data-raw')) || 1);
-             const scaledNac = nac * scale;
-             const scaledExp = exp * scale;
+             if (forceNac === undefined && forceExp === undefined) {
+               const raw = parseFloat(el.getAttribute('data-raw')) || (nac + exp) || 0;
+               const scale = (raw > 0) ? (val / raw) : 1;
+               nac = nac * scale;
+               exp = exp * scale;
+             }
              
-             const widthNac = totalForecast ? (scaledNac / totalForecast * 100) : 0;
-             const widthExp = totalForecast ? (scaledExp / totalForecast * 100) : 0;
+             const widthNac = totalForecast ? (nac / totalForecast * 100) : 0;
+             const widthExp = totalForecast ? (exp / totalForecast * 100) : 0;
              if (fillNac) fillNac.style.width = widthNac + '%';
              if (fillExp) fillExp.style.width = widthExp + '%';
              const subtext = el.querySelector('.split-subtext');
-             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(scaledNac)} | Exp: ${formatMoney(scaledExp)}`;
+             if (subtext) subtext.innerHTML = `Nac: ${formatMoney(nac)} | Exp: ${formatMoney(exp)}`;
           } else {
              const fill = el.querySelector('.bar-fill');
              if (fill) {
@@ -2425,14 +2445,10 @@
           }
         };
 
-        updateExecBar(execBarFacturado, facturado);
-        updateExecBar(execBarAlbaranes, albaranes);
-        updateExecBar(execBarCargables, checkedAmount);
-        
-        if (execBarEstimacion) {
-          const valText = execBarEstimacion.querySelector('.bar-value');
-          if (valText) valText.textContent = formatMoney(totalForecast);
-        }
+        updateExecBar(execBarFacturado, facturado, facturadoNac, facturadoExp);
+        updateExecBar(execBarAlbaranes, albaranes, albaranesNac, albaranesExp);
+        updateExecBar(execBarCargables, checkedAmount, checkedNac, checkedExp);
+        updateExecBar(execBarEstimacion, totalForecast, estimacionNac, estimacionExp);
 
         // 6. Actualizar KPI Card de Carga Pendiente
         const kpiCargaPendiente = document.getElementById('kpi-carga-pendiente-value');
