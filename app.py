@@ -5692,7 +5692,14 @@ class Handler(BaseHTTPRequestHandler):
                         if comment_id:
                             supabase_request('document_comments', method='DELETE', query_params={'id': f'eq.{comment_id}'})
                         elif tipo_documento:
-                            supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}', 'tipo_documento': f'eq.{tipo_documento}'})
+                            try:
+                                supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}', 'tipo_documento': f'eq.{tipo_documento}'})
+                            except Exception as ex_tipo:
+                                print(f"Warning deleting by tipo_documento: {ex_tipo}")
+                            try:
+                                supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}', 'tipo_documento': 'is.null'})
+                            except Exception:
+                                pass
                         else:
                             supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}'})
                     self.send_response(200)
