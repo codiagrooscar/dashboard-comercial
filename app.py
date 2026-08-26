@@ -154,6 +154,21 @@ def load_data_from_local(report_date: str) -> dict[str, pd.DataFrame] | None:
             found_any = True
             records = json.loads(path.read_text(encoding='utf-8'))
             dfs[name] = pd.DataFrame(records)
+        elif name == 'costes':
+            # Fallback a costes subidos en cualquier fecha reciente
+            costes_found = False
+            for d_dir in sorted(LOCAL_DATA_DIR.iterdir(), reverse=True):
+                if d_dir.is_dir() and (d_dir / 'costes.json').exists():
+                    try:
+                        c_recs = json.loads((d_dir / 'costes.json').read_text(encoding='utf-8'))
+                        if c_recs:
+                            dfs[name] = pd.DataFrame(c_recs)
+                            costes_found = True
+                            break
+                    except Exception:
+                        pass
+            if not costes_found:
+                dfs[name] = pd.DataFrame()
         else:
             dfs[name] = pd.DataFrame()
         dfs[name] = ensure_types_normalized_df(dfs[name], name)
@@ -461,6 +476,12 @@ def load_data_from_supabase(report_date: str) -> dict[str, pd.DataFrame] | None:
             print(f'Error cargando {name} de Supabase: {e}')
             records = []
             
+        if not records and name == 'costes':
+            try:
+                records = supabase_request_all('costes', query_params={'select': '*'})
+            except Exception as e:
+                records = []
+                
         if not records:
             dfs[name] = pd.DataFrame()
         else:
