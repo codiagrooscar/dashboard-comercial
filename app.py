@@ -2433,9 +2433,21 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         'price_deviations': calculate_price_deviations(pedidos, facturas)
     }
     
-    # Presupuesto del mes leido de Supabase (tabla objetivos_mensuales).
-    # Sin fallback: si Supabase no responde o no hay registro, el presupuesto
-    # se muestra como N/D en vez de usar un valor inventado.
+    # Presupuesto del mes leido de Supabase (tabla objetivos_mensuales) o fallback por mes
+    DEFAULT_MONTH_BUDGETS = {
+        1: 1500000.0,
+        2: 1500000.0,
+        3: 1600000.0,
+        4: 1600000.0,
+        5: 1636909.0,
+        6: 2150256.0,
+        7: 1636909.0,
+        8: 776076.0,
+        9: 1800000.0,
+        10: 1800000.0,
+        11: 1800000.0,
+        12: 1500000.0,
+    }
     month_budget = None
     try:
         res = supabase_request("objetivos_mensuales", "GET", query_params={"ano": f"eq.{current.year}", "mes": f"eq.{current.month}"})
@@ -2444,7 +2456,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     except Exception as e:
         print("Error fetching month budget:", e)
     if month_budget is None:
-        month_budget = 2150256.0
+        month_budget = DEFAULT_MONTH_BUDGETS.get(current.month, 776076.0 if current.month == 8 else 2150256.0)
         
     month_invoiced = float(month['facturas']['importe'].sum())
     pending_delivery_amount = float(pending_albaranes['importe'].sum()) if not pending_albaranes.empty else 0.0
