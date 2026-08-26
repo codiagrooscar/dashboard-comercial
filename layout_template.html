@@ -2281,10 +2281,12 @@
           initExecBarCargables.setAttribute('data-exp', checkedExp);
         }
 
-        // Guardar estado en localStorage
+        // Guardar estado en localStorage diferenciando por tipo y documento
         let selections = {};
         document.querySelectorAll('.order-chk').forEach(chk => {
-          selections[chk.getAttribute('data-doc')] = chk.checked;
+          const doc = chk.getAttribute('data-doc');
+          const tipo = (chk.getAttribute('data-tipo') || 'pedido').toLowerCase();
+          selections[`${tipo}:${doc}`] = chk.checked;
         });
         localStorage.setItem('orderSelections', JSON.stringify(selections));
 
@@ -2551,8 +2553,10 @@
           const selections = JSON.parse(savedSelections);
           document.querySelectorAll('.order-chk').forEach(chk => {
             const doc = chk.getAttribute('data-doc');
-            if (selections[doc] !== undefined) {
-              chk.checked = selections[doc];
+            const tipo = (chk.getAttribute('data-tipo') || 'pedido').toLowerCase();
+            const key = `${tipo}:${doc}`;
+            if (selections[key] !== undefined) {
+              chk.checked = selections[key];
             }
           });
         } catch (e) {
