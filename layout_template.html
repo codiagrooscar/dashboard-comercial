@@ -2581,9 +2581,38 @@
 
   <script>
     // Initialize DataTables
+    function parseTableNumeric(text) {
+        if (!text) return 0;
+        let t = text.trim().replace(/[€%\sEUReur]/g, '');
+        if (t.includes('.') && t.includes(',')) {
+            t = t.replace(/\./g, '').replace(',', '.');
+        } else if (t.includes('.') && !t.includes(',')) {
+            if (/\.\d{3}$/.test(t) || /\.\d{3}\./.test(t)) {
+                t = t.replace(/\./g, '');
+            }
+        } else if (t.includes(',')) {
+            t = t.replace(',', '.');
+        }
+        const val = parseFloat(t);
+        return isNaN(val) ? 0 : val;
+    }
+
     function initDataTables() {
         document.querySelectorAll('table.datatable').forEach(table => {
             if (!table.classList.contains('dataTable-table')) {
+                table.querySelectorAll('tbody tr td').forEach(td => {
+                    if (!td.getAttribute('data-sort') && !td.getAttribute('data-order')) {
+                        const txt = td.textContent || '';
+                        if (txt.includes('EUR') || txt.includes('€') || txt.includes('%') || /^\s*[\d\.,\s-]+\s*$/.test(txt)) {
+                            const num = parseTableNumeric(txt);
+                            td.setAttribute('data-sort', num);
+                            td.setAttribute('data-order', num);
+                            td.dataset.sort = num;
+                            td.dataset.order = num;
+                        }
+                    }
+                });
+
                 const dt = new simpleDatatables.DataTable(table, {
                     searchable: true,
                     fixedHeight: false,

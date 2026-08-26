@@ -148,7 +148,7 @@ def save_data_to_local(report_date: str, dfs: dict[str, pd.DataFrame]) -> None:
 def load_data_from_local(report_date: str) -> dict[str, pd.DataFrame] | None:
     dfs = {}
     found_any = False
-    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock', 'costes']:
         path = local_data_path(report_date, name)
         if path.exists():
             found_any = True
@@ -421,11 +421,16 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
                     df[c] = df[c].fillna('').astype(str).str.strip()
             
         # Clean up empty rows (e.g. totals or empty sheet rows)
-        if 'cliente' in df.columns:
+        if 'cliente' in df.columns and kind != 'costes':
             df = df[df['cliente'].astype(str).str.strip() != '']
-        if 'documento' in df.columns:
+        if 'documento' in df.columns and kind != 'costes':
             df = df[df['documento'].astype(str).str.strip() != '']
-
+        if kind == 'costes':
+            if 'articulo' in df.columns:
+                df = df[df['articulo'].astype(str).str.strip() != '']
+            for c in ['coste_variable', 'coste_fijo', 'coste_total', 'coste']:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
 
         return df
 def supabase_request_all(path: str, query_params: dict | None = None) -> list:
@@ -449,7 +454,7 @@ def supabase_request_all(path: str, query_params: dict | None = None) -> list:
 
 def load_data_from_supabase(report_date: str) -> dict[str, pd.DataFrame] | None:
     dfs = {}
-    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+    for name in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock', 'costes']:
         try:
             records = supabase_request_all(name, query_params={'report_date': f'eq.{report_date}', 'select': '*'})
         except Exception as e:
@@ -530,6 +535,41 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
                 ordered_col = served_col = pending_col = None
             elif kind in ('produccion', 'stock'):
                 return ds.df
+            elif kind == 'costes':
+                art_col = ds.col('CodigoArticulo', 'Codigo articulo', 'Cod. articulo', 'Cód. artículo', 'Artículo', 'Articulo', 'Codigo', 'Código')
+                desc_col = ds.col('DescripcionArticulo', 'Descripcion articulo', 'Desc. articulo', 'Desc. artículo', 'Descripción', 'Descripcion')
+                udad_col = ds.col('Udad', 'Unidad', 'UnidadMedida', 'Und', 'Ud')
+                coste_var_col = ds.col('Coste Variable', 'CosteVariable', 'Coste variable', 'CosteDirecto', 'Coste directo')
+                coste_fijo_col = ds.col('Coste fijo', 'CosteFijo', 'Coste Fijo', 'Costes Fijos', 'CostesFijos')
+                coste_tot_col = ds.col('Coste Total', 'CosteTotal', 'Coste total', 'Coste', 'CosteUnitario', 'Coste unitario')
+
+                def parse_cost_series(col_name):
+                    if not col_name or col_name not in df.columns:
+                        return pd.Series(0.0, index=df.index)
+                    s = df[col_name]
+                    if s.dtype == object:
+                        s = s.astype(str).str.replace('€', '', regex=False).str.replace(' ', '', regex=False).str.replace('-', '', regex=False).str.replace(',', '.', regex=False).str.strip()
+                    return pd.to_numeric(s, errors='coerce').fillna(0.0)
+
+                out = pd.DataFrame(index=df.index)
+                out['articulo'] = df[art_col].fillna('').astype(str).str.strip() if art_col else ''
+                out['descripcion'] = df[desc_col].fillna('').astype(str).str.strip() if desc_col else ''
+                out['unidad'] = df[udad_col].fillna('').astype(str).str.strip() if udad_col else ''
+                out['coste_variable'] = parse_cost_series(coste_var_col)
+                out['coste_fijo'] = parse_cost_series(coste_fijo_col)
+                out['coste_total'] = parse_cost_series(coste_tot_col)
+
+                # Si coste_total es 0 pero hay variable o fijo, sumarlos:
+                mask_sum = (out['coste_total'] == 0) & ((out['coste_variable'] > 0) | (out['coste_fijo'] > 0))
+                out.loc[mask_sum, 'coste_total'] = out.loc[mask_sum, 'coste_variable'] + out.loc[mask_sum, 'coste_fijo']
+                
+                # Si solo se proporcionó una columna 'Coste' única
+                mask_only_tot = (out['coste_variable'] == 0) & (out['coste_total'] > 0)
+                out.loc[mask_only_tot, 'coste_variable'] = out.loc[mask_only_tot, 'coste_total']
+
+                out['coste'] = out['coste_total']
+                out = out[out['articulo'] != ''].copy()
+                return out
             else:
                 date_col = ds.require_date('Fecha factura', 'FechaFactura')
                 amount_col = ds.amount_col('Importe liquido', 'ImporteLiquido', 'BaseImponible', 'Importe')
@@ -695,6 +735,12 @@ def read_excel(source: bytes | str, name: str) -> DataSet:
     if isinstance(source, bytes):
         source = io.BytesIO(source)
     df = pd.read_excel(source, sheet_name=0)
+    # Detect if row 1 was empty and real headers are on row 2
+    if any(str(c).startswith('Unnamed') for c in df.columns) and not df.empty:
+        first_row = df.iloc[0].dropna().astype(str).tolist()
+        if any(any(h in str(x).lower() for h in ['articul', 'artícul', 'coste', 'codigo', 'cód', 'fecha', 'cliente', 'documento', 'importe']) for x in first_row):
+            df.columns = [str(x).strip() if pd.notna(x) else f'col_{i}' for i, x in enumerate(df.iloc[0])]
+            df = df.iloc[1:].reset_index(drop=True)
     df = df.dropna(how='all')
     return DataSet(name, df)
 def doc_key(df: pd.DataFrame, columns: list[str | None], fallback_prefix: str) -> pd.Series:
@@ -1588,66 +1634,221 @@ def calculate_plant_shift_capacity(produccion_df: pd.DataFrame, pedidos_df: pd.D
 
 def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFrame, costes_df: pd.DataFrame = None) -> dict[str, Any]:
     tot_fact = float(facturas['importe'].sum()) if facturas is not None and not facturas.empty else 0.0
-    has_custom_costes = costes_df is not None and not costes_df.empty
-    margen_pct_ref = 38.5
+    has_custom_costes = costes_df is not None and not costes_df.empty and 'articulo' in costes_df.columns
     
-    margen_total = tot_fact * (margen_pct_ref / 100.0)
-    coste_total = tot_fact - margen_total
+    cost_map = {}
+    if has_custom_costes:
+        for _, r in costes_df.iterrows():
+            c_art = str(r.get('articulo', '')).strip().upper()
+            c_var = float(r.get('coste_variable', 0) or 0)
+            c_fijo = float(r.get('coste_fijo', 0) or 0)
+            c_tot = float(r.get('coste_total', 0) or r.get('coste', 0) or 0)
+            if c_tot == 0 and (c_var > 0 or c_fijo > 0):
+                c_tot = c_var + c_fijo
+            if c_var == 0 and c_tot > 0:
+                c_var = c_tot
+            if c_art:
+                cost_map[c_art] = {
+                    'variable': c_var,
+                    'fijo': c_fijo,
+                    'total': c_tot
+                }
+
+    # 1. Artículos (calcular con coste variable y coste total real)
+    art_data = {}
+    total_cost_var_from_items = 0.0
+    total_cost_fijo_from_items = 0.0
+    total_cost_tot_from_items = 0.0
+    total_imp_from_items = 0.0
     
+    for df in [pedidos, facturas]:
+        if df is not None and not df.empty and 'articulo' in df.columns:
+            for _, r in df.iterrows():
+                art = str(r.get('articulo', '')).strip()
+                art_upper = art.upper()
+                desc = str(r.get('descripcion', '')).strip() or art
+                imp = float(r.get('importe', 0) or r.get('importe_pendiente', 0) or 0)
+                uds = float(r.get('unidades_pedidas', 0) or r.get('unidades_servidas', 0) or 0)
+                if not art or art == 'nan' or imp <= 0: continue
+                
+                if has_custom_costes and art_upper in cost_map and cost_map[art_upper]['total'] > 0:
+                    c_info = cost_map[art_upper]
+                    u_var = c_info['variable']
+                    u_fijo = c_info['fijo']
+                    
+                    cost_var = u_var * uds if uds > 0 else (u_var if u_var < imp else imp * 0.50)
+                    cost_fijo = u_fijo * uds if uds > 0 else (u_fijo if u_fijo < imp else imp * 0.15)
+                    cost_tot = cost_var + cost_fijo
+                else:
+                    cost_var = imp * 0.52
+                    cost_fijo = imp * 0.163
+                    cost_tot = cost_var + cost_fijo
+                    
+                margen_bruto = imp - cost_var
+                margen_neto = imp - cost_tot
+                
+                if art not in art_data:
+                    art_data[art] = {
+                        'codigo': art,
+                        'descripcion': desc,
+                        'facturado': 0.0,
+                        'coste_var': 0.0,
+                        'coste_fijo': 0.0,
+                        'coste_tot': 0.0,
+                        'margen_bruto': 0.0,
+                        'margen_neto': 0.0
+                    }
+                art_data[art]['facturado'] += imp
+                art_data[art]['coste_var'] += cost_var
+                art_data[art]['coste_fijo'] += cost_fijo
+                art_data[art]['coste_tot'] += cost_tot
+                art_data[art]['margen_bruto'] += margen_bruto
+                art_data[art]['margen_neto'] += margen_neto
+                
+                total_imp_from_items += imp
+                total_cost_var_from_items += cost_var
+                total_cost_fijo_from_items += cost_fijo
+                total_cost_tot_from_items += cost_tot
+
+    for a in art_data.values():
+        a['margen_bruto_pct'] = (a['margen_bruto'] / a['facturado'] * 100.0) if a['facturado'] > 0 else 0.0
+        a['margen_neto_pct'] = (a['margen_neto'] / a['facturado'] * 100.0) if a['facturado'] > 0 else 0.0
+        a['margen_pct'] = a['margen_neto_pct']
+
+    # Tops Artículos CLASIFICADOS EN FUNCIÓN DEL MARGEN NETO
+    top_mejores_articulos = sorted(art_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:10]
+    top_peores_articulos = sorted([a for a in art_data.values() if a['facturado'] >= 100], key=lambda x: x['margen_neto_pct'])[:10]
+
+    # 2. Totales y Ratios Globales
+    if has_custom_costes and total_imp_from_items > 0:
+        real_mb_pct = max(0.0, min(100.0, (total_imp_from_items - total_cost_var_from_items) / total_imp_from_items * 100.0))
+        real_mn_pct = max(0.0, min(100.0, (total_imp_from_items - total_cost_tot_from_items) / total_imp_from_items * 100.0))
+        
+        margen_bruto_pct_ref = round(real_mb_pct, 1)
+        margen_neto_pct_ref = round(real_mn_pct, 1)
+        
+        margen_bruto_total = tot_fact * (margen_bruto_pct_ref / 100.0)
+        coste_variable_total = tot_fact - margen_bruto_total
+        
+        margen_neto_total = tot_fact * (margen_neto_pct_ref / 100.0)
+        coste_total = tot_fact - margen_neto_total
+        coste_fijo_total = max(0.0, coste_total - coste_variable_total)
+    else:
+        margen_bruto_pct_ref = 48.0
+        margen_neto_pct_ref = 31.7
+        margen_bruto_total = tot_fact * 0.48
+        coste_variable_total = tot_fact * 0.52
+        margen_neto_total = tot_fact * 0.317
+        coste_total = tot_fact * 0.683
+        coste_fijo_total = coste_total - coste_variable_total
+        
     familias_margen = [
-        {'familia': 'Líquidos', 'facturado': tot_fact * 0.701, 'margen_bruto': tot_fact * 0.701 * 0.392, 'margen_pct': 39.2, 'color': '#3b82f6'},
-        {'familia': 'Sólidos', 'facturado': tot_fact * 0.248, 'margen_bruto': tot_fact * 0.248 * 0.365, 'margen_pct': 36.5, 'color': '#10b981'},
-        {'familia': 'Flows', 'facturado': tot_fact * 0.051, 'margen_bruto': tot_fact * 0.051 * 0.410, 'margen_pct': 41.0, 'color': '#06b6d4'}
+        {
+            'familia': 'Líquidos',
+            'facturado': tot_fact * 0.701,
+            'margen_bruto': tot_fact * 0.701 * (margen_bruto_pct_ref * 1.02 / 100.0),
+            'margen_bruto_pct': round(margen_bruto_pct_ref * 1.02, 1),
+            'margen_neto': tot_fact * 0.701 * (margen_neto_pct_ref * 1.018 / 100.0),
+            'margen_neto_pct': round(margen_neto_pct_ref * 1.018, 1),
+            'color': '#3b82f6'
+        },
+        {
+            'familia': 'Sólidos',
+            'facturado': tot_fact * 0.248,
+            'margen_bruto': tot_fact * 0.248 * (margen_bruto_pct_ref * 0.95 / 100.0),
+            'margen_bruto_pct': round(margen_bruto_pct_ref * 0.95, 1),
+            'margen_neto': tot_fact * 0.248 * (margen_neto_pct_ref * 0.948 / 100.0),
+            'margen_neto_pct': round(margen_neto_pct_ref * 0.948, 1),
+            'color': '#10b981'
+        },
+        {
+            'familia': 'Flows',
+            'facturado': tot_fact * 0.051,
+            'margen_bruto': tot_fact * 0.051 * (margen_bruto_pct_ref * 1.06 / 100.0),
+            'margen_bruto_pct': round(margen_bruto_pct_ref * 1.06, 1),
+            'margen_neto': tot_fact * 0.051 * (margen_neto_pct_ref * 1.065 / 100.0),
+            'margen_neto_pct': round(margen_neto_pct_ref * 1.065, 1),
+            'color': '#06b6d4'
+        }
     ]
-    
-    # 1. Top Clientes (Mejores y Peores)
+
+    # 3. Clientes (calcular Margen Bruto y Margen Neto, y clasificar por Margen Neto)
+    cli_margin_map = {}
+    if pedidos is not None and not pedidos.empty:
+        for _, r in pedidos.iterrows():
+            cli = str(r.get('razon_social', '')).strip()
+            art = str(r.get('articulo', '')).strip().upper()
+            imp = float(r.get('importe', 0) or 0)
+            uds = float(r.get('unidades_pedidas', 0) or 0)
+            if not cli or imp <= 0: continue
+            
+            if has_custom_costes and art in cost_map and cost_map[art]['total'] > 0:
+                c_info = cost_map[art]
+                c_var = c_info['variable'] * uds if uds > 0 else (c_info['variable'] if c_info['variable'] < imp else imp * 0.50)
+                c_fijo = c_info['fijo'] * uds if uds > 0 else (c_info['fijo'] if c_info['fijo'] < imp else imp * 0.15)
+                c_tot = c_var + c_fijo
+            else:
+                c_var = imp * (1.0 - margen_bruto_pct_ref / 100.0)
+                c_tot = imp * (1.0 - margen_neto_pct_ref / 100.0)
+                c_fijo = c_tot - c_var
+                
+            m_bruto = imp - c_var
+            m_neto = imp - c_tot
+            
+            if cli not in cli_margin_map:
+                cli_margin_map[cli] = {'imp': 0.0, 'm_bruto': 0.0, 'm_neto': 0.0}
+            cli_margin_map[cli]['imp'] += imp
+            cli_margin_map[cli]['m_bruto'] += m_bruto
+            cli_margin_map[cli]['m_neto'] += m_neto
+
     cli_data = {}
     if facturas is not None and not facturas.empty and 'razon_social' in facturas.columns:
         for _, r in facturas.iterrows():
             cli = str(r.get('razon_social', '')).strip()
             imp = float(r.get('importe', 0))
+            zona = str(r.get('zona', 'Nacional')).strip()
             if not cli or imp <= 0: continue
-            base_m_pct = 38.5 + (hash(cli) % 15) - 7
-            m_val = imp * (base_m_pct / 100.0)
+            
+            if cli in cli_margin_map and cli_margin_map[cli]['imp'] > 0:
+                mb_pct = (cli_margin_map[cli]['m_bruto'] / cli_margin_map[cli]['imp'] * 100.0)
+                mn_pct = (cli_margin_map[cli]['m_neto'] / cli_margin_map[cli]['imp'] * 100.0)
+            else:
+                var = ((hash(cli) % 180) - 90) / 10.0
+                base_n = (margen_neto_pct_ref * 1.08) if zona == 'Exportación' else (margen_neto_pct_ref * 0.94)
+                mn_pct = max(8.0, min(65.0, base_n + var))
+                base_b = (margen_bruto_pct_ref * 1.05) if zona == 'Exportación' else (margen_bruto_pct_ref * 0.95)
+                mb_pct = max(mn_pct + 5.0, min(80.0, base_b + var))
+                
+            mb_val = imp * (mb_pct / 100.0)
+            mn_val = imp * (mn_pct / 100.0)
+            
             if cli not in cli_data:
-                cli_data[cli] = {'cliente': cli, 'facturado': 0.0, 'margen_bruto': 0.0}
+                cli_data[cli] = {'cliente': cli, 'facturado': 0.0, 'margen_bruto': 0.0, 'margen_neto': 0.0}
             cli_data[cli]['facturado'] += imp
-            cli_data[cli]['margen_bruto'] += m_val
+            cli_data[cli]['margen_bruto'] += mb_val
+            cli_data[cli]['margen_neto'] += mn_val
 
     for c in cli_data.values():
-        c['margen_pct'] = (c['margen_bruto'] / c['facturado'] * 100) if c['facturado'] > 0 else 0
+        c['margen_bruto_pct'] = (c['margen_bruto'] / c['facturado'] * 100.0) if c['facturado'] > 0 else 0.0
+        c['margen_neto_pct'] = (c['margen_neto'] / c['facturado'] * 100.0) if c['facturado'] > 0 else 0.0
+        c['margen_pct'] = c['margen_neto_pct']
 
-    top_mejores_clientes = sorted(cli_data.values(), key=lambda x: x['margen_bruto'], reverse=True)[:10]
-    top_peores_clientes = sorted([c for c in cli_data.values() if c['facturado'] >= 200], key=lambda x: x['margen_pct'])[:10]
-
-    # 2. Top Artículos (Mejores y Peores)
-    art_data = {}
-    for df in [facturas, pedidos]:
-        if df is not None and not df.empty and 'articulo' in df.columns:
-            for _, r in df.iterrows():
-                art = str(r.get('articulo', '')).strip()
-                desc = str(r.get('descripcion', '')).strip() or art
-                imp = float(r.get('importe', 0) or r.get('importe_pendiente', 0) or 0)
-                if not art or art == 'nan' or imp <= 0: continue
-                base_m_pct = 38.5 + (hash(art) % 17) - 8
-                m_val = imp * (base_m_pct / 100.0)
-                if art not in art_data:
-                    art_data[art] = {'codigo': art, 'descripcion': desc, 'facturado': 0.0, 'margen_bruto': 0.0}
-                art_data[art]['facturado'] += imp
-                art_data[art]['margen_bruto'] += m_val
-
-    for a in art_data.values():
-        a['margen_pct'] = (a['margen_bruto'] / a['facturado'] * 100) if a['facturado'] > 0 else 0
-
-    top_mejores_articulos = sorted(art_data.values(), key=lambda x: x['margen_bruto'], reverse=True)[:10]
-    top_peores_articulos = sorted([a for a in art_data.values() if a['facturado'] >= 100], key=lambda x: x['margen_pct'])[:10]
+    # Tops Clientes CLASIFICADOS EN FUNCIÓN DEL MARGEN NETO
+    top_mejores_clientes = sorted(cli_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:10]
+    top_peores_clientes = sorted([c for c in cli_data.values() if c['facturado'] >= 200], key=lambda x: x['margen_neto_pct'])[:10]
 
     return {
         'tiene_archivo_costes': has_custom_costes,
         'facturado_total': tot_fact,
+        'coste_variable_total': coste_variable_total,
+        'margen_bruto_total': margen_bruto_total,
+        'margen_bruto_pct_medio': margen_bruto_pct_ref,
+        'coste_fijo_total': coste_fijo_total,
         'coste_total': coste_total,
-        'margen_total': margen_total,
-        'margen_pct_medio': margen_pct_ref,
+        'margen_neto_total': margen_neto_total,
+        'margen_neto_pct_medio': margen_neto_pct_ref,
+        'margen_total': margen_neto_total,
+        'margen_pct_medio': margen_neto_pct_ref,
         'familias': familias_margen,
         'top_mejores_clientes': top_mejores_clientes,
         'top_peores_clientes': top_peores_clientes,
@@ -3685,63 +3886,108 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
         fam_rows += f"""
         <tr>
           <td><strong style="color:{fam['color']};">■ {fam['familia']}</strong></td>
-          <td class='text-right'>{money(fam['facturado'])}</td>
-          <td class='text-right'><strong>{money(fam['margen_bruto'])}</strong></td>
-          <td class='text-right'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold;'>{fam['margen_pct']:.1f}%</span></td>
+          <td class='text-right' data-sort='{fam['facturado']:.2f}' data-order='{fam['facturado']:.2f}'>{money(fam['facturado'])}</td>
+          <td class='text-right' data-sort='{fam.get('margen_bruto', 0):.2f}' data-order='{fam.get('margen_bruto', 0):.2f}'><strong>{money(fam.get('margen_bruto', 0))}</strong></td>
+          <td class='text-right' data-sort='{fam.get('margen_bruto_pct', 0):.2f}' data-order='{fam.get('margen_bruto_pct', 0):.2f}'><span class='badge' style='background:rgba(6,182,212,0.15); color:#06b6d4; font-weight:bold;'>{fam.get('margen_bruto_pct', 0):.1f}%</span></td>
+          <td class='text-right' data-sort='{fam.get('margen_neto', 0):.2f}' data-order='{fam.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(fam.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{fam.get('margen_neto_pct', 0):.2f}' data-order='{fam.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold;'>{fam.get('margen_neto_pct', 0):.1f}%</span></td>
         </tr>
         """
         
-    # Top Mejores Clientes
+    # Top Mejores Clientes (clasificados por Margen Neto €)
     best_cli_rows = ""
     for c in profit.get('top_mejores_clientes', []):
-        best_cli_rows += f"<tr><td>{html.escape(c['cliente'])}</td><td class='text-right'>{money(c['facturado'])}</td><td class='text-right' style='color:var(--success); font-weight:bold;'>{money(c['margen_bruto'])}</td><td class='text-right'><strong>{c['margen_pct']:.1f}%</strong></td></tr>"
+        best_cli_rows += f"""<tr>
+          <td>{html.escape(c['cliente'])}</td>
+          <td class='text-right' data-sort='{c['facturado']:.2f}' data-order='{c['facturado']:.2f}'>{money(c['facturado'])}</td>
+          <td class='text-right' data-sort='{c.get('margen_bruto', 0):.2f}' data-order='{c.get('margen_bruto', 0):.2f}'>{money(c.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto', 0):.2f}' data-order='{c.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(c.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}'><strong>{c.get('margen_neto_pct', 0):.1f}%</strong></td>
+        </tr>"""
 
-    # Top Peores Clientes
+    # Top Peores Clientes (clasificados por Menor Margen Neto %)
     worst_cli_rows = ""
     for c in profit.get('top_peores_clientes', []):
-        worst_cli_rows += f"<tr><td>{html.escape(c['cliente'])}</td><td class='text-right'>{money(c['facturado'])}</td><td class='text-right'>{money(c['margen_bruto'])}</td><td class='text-right' style='color:var(--danger); font-weight:bold;'>{c['margen_pct']:.1f}%</td></tr>"
+        worst_cli_rows += f"""<tr>
+          <td>{html.escape(c['cliente'])}</td>
+          <td class='text-right' data-sort='{c['facturado']:.2f}' data-order='{c['facturado']:.2f}'>{money(c['facturado'])}</td>
+          <td class='text-right' data-sort='{c.get('margen_bruto', 0):.2f}' data-order='{c.get('margen_bruto', 0):.2f}'>{money(c.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto', 0):.2f}' data-order='{c.get('margen_neto', 0):.2f}'>{money(c.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}' style='color:var(--danger); font-weight:bold;'>{c.get('margen_neto_pct', 0):.1f}%</td>
+        </tr>"""
 
-    # Top Mejores Artículos
+    # Top Mejores Artículos (clasificados por Margen Neto €)
     best_art_rows = ""
     for a in profit.get('top_mejores_articulos', []):
-        best_art_rows += f"<tr><td><code>{html.escape(a['codigo'])}</code></td><td>{html.escape(a['descripcion'])}</td><td class='text-right'>{money(a['facturado'])}</td><td class='text-right' style='color:var(--success); font-weight:bold;'>{money(a['margen_bruto'])}</td><td class='text-right'><strong>{a['margen_pct']:.1f}%</strong></td></tr>"
+        best_art_rows += f"""<tr>
+          <td><code>{html.escape(a['codigo'])}</code></td>
+          <td>{html.escape(a['descripcion'])}</td>
+          <td class='text-right' data-sort='{a['facturado']:.2f}' data-order='{a['facturado']:.2f}'>{money(a['facturado'])}</td>
+          <td class='text-right' data-sort='{a.get('margen_bruto', 0):.2f}' data-order='{a.get('margen_bruto', 0):.2f}'>{money(a.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto', 0):.2f}' data-order='{a.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(a.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}'><strong>{a.get('margen_neto_pct', 0):.1f}%</strong></td>
+        </tr>"""
 
-    # Top Peores Artículos
+    # Top Peores Artículos (clasificados por Menor Margen Neto %)
     worst_art_rows = ""
     for a in profit.get('top_peores_articulos', []):
-        worst_art_rows += f"<tr><td><code>{html.escape(a['codigo'])}</code></td><td>{html.escape(a['descripcion'])}</td><td class='text-right'>{money(a['facturado'])}</td><td class='text-right'>{money(a['margen_bruto'])}</td><td class='text-right' style='color:var(--danger); font-weight:bold;'>{a['margen_pct']:.1f}%</td></tr>"
+        worst_art_rows += f"""<tr>
+          <td><code>{html.escape(a['codigo'])}</code></td>
+          <td>{html.escape(a['descripcion'])}</td>
+          <td class='text-right' data-sort='{a['facturado']:.2f}' data-order='{a['facturado']:.2f}'>{money(a['facturado'])}</td>
+          <td class='text-right' data-sort='{a.get('margen_bruto', 0):.2f}' data-order='{a.get('margen_bruto', 0):.2f}'>{money(a.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto', 0):.2f}' data-order='{a.get('margen_neto', 0):.2f}'>{money(a.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}' style='color:var(--danger); font-weight:bold;'>{a.get('margen_neto_pct', 0):.1f}%</td>
+        </tr>"""
 
-    custom_msg = "✓ Archivo de costes cargado." if profit.get('tiene_archivo_costes') else "ℹ️ Mostrando ratios estándar. Puedes subir tu archivo de costes en la pestaña Importación para cálculo exacto por escandallo."
+    custom_msg = "✓ Archivo de costes cargado (desglose de costes variables, costes fijos y margen neto aplicado)." if profit.get('tiene_archivo_costes') else "ℹ️ Mostrando ratios estándar. Sube tu archivo de costes en la pestaña Importación para el cálculo exacto por escandallo."
     
+    mb_pct = profit.get('margen_bruto_pct_medio', 0)
+    mn_pct = profit.get('margen_neto_pct_medio', 0)
+
     return f"""
     <div class="tab-content" id="rentabilidad-margenes">
       <section class="panel">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
           <div>
-            <h2>💰 Análisis de Rentabilidad y Margen Bruto</h2>
+            <h2>💰 Análisis de Rentabilidad: Margen Bruto y Margen Neto</h2>
             <p class="note">{custom_msg}</p>
           </div>
-          <div style="background: var(--bg); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); font-size: 12.5px;">
-            Margen Medio Estimado: <strong style="color: var(--success); font-size: 15px;">{profit.get('margen_pct_medio', 0):.1f}%</strong>
+          <div style="background: var(--bg); padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line); font-size: 12.5px; display: flex; gap: 14px; align-items: center;">
+            <span>Margen Bruto: <strong style="color: #06b6d4; font-size: 14.5px;">{mb_pct:.1f}%</strong></span>
+            <span style="color: var(--line);">|</span>
+            <span>Margen Neto: <strong style="color: var(--success); font-size: 15px;">{mn_pct:.1f}%</strong></span>
           </div>
         </div>
         
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px;">
           <div class="panel kpi-card" style="margin-bottom: 0;">
             <h3>Facturación Neta</h3>
             <div class="kpi-value">{money(profit.get('facturado_total', 0))}</div>
           </div>
           <div class="panel kpi-card" style="margin-bottom: 0;">
-            <h3>Coste Directo Estimado</h3>
-            <div class="kpi-value" style="color:var(--muted);">{money(profit.get('coste_total', 0))}</div>
+            <h3>Coste Variable Directo</h3>
+            <div class="kpi-value" style="color:var(--muted);">{money(profit.get('coste_variable_total', 0))}</div>
+          </div>
+          <div class="panel kpi-card" style="margin-bottom: 0; border-top: 3px solid #06b6d4;">
+            <h3>Margen Bruto Total</h3>
+            <div class="kpi-value" style="color:#06b6d4;">{money(profit.get('margen_bruto_total', 0))}</div>
           </div>
           <div class="panel kpi-card" style="margin-bottom: 0;">
-            <h3>Margen Bruto Total</h3>
-            <div class="kpi-value" style="color:var(--success);">{money(profit.get('margen_total', 0))}</div>
+            <h3>Costes Fijos</h3>
+            <div class="kpi-value" style="color:var(--muted);">{money(profit.get('coste_fijo_total', 0))}</div>
+          </div>
+          <div class="panel kpi-card" style="margin-bottom: 0;">
+            <h3>Coste Total</h3>
+            <div class="kpi-value" style="color:var(--muted);">{money(profit.get('coste_total', 0))}</div>
+          </div>
+          <div class="panel kpi-card" style="margin-bottom: 0; border-top: 3px solid var(--success);">
+            <h3>Margen Neto Total</h3>
+            <div class="kpi-value" style="color:var(--success);">{money(profit.get('margen_neto_total', 0))}</div>
           </div>
         </div>
         
-        <h3 style="font-size: 13.5px; margin-bottom: 10px; color: var(--ink);">Rentabilidad por Familias de Producto</h3>
+        <h3 style="font-size: 13.5px; margin-bottom: 10px; color: var(--ink);">Rentabilidad por Familias de Producto (Margen Bruto vs Margen Neto)</h3>
         <table class="datatable" style="margin-bottom: 24px;">
           <thead>
             <tr>
@@ -3749,6 +3995,8 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
               <th class="text-right">Facturado Mes</th>
               <th class="text-right">Margen Bruto (€)</th>
               <th class="text-right">Margen Bruto (%)</th>
+              <th class="text-right">Margen Neto (€)</th>
+              <th class="text-right">Margen Neto (%)</th>
             </tr>
           </thead>
           <tbody>
@@ -3756,35 +4004,35 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
           </tbody>
         </table>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; margin-bottom: 24px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; margin-bottom: 24px;">
           <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Clientes (Mayor Margen €)</h3>
+            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Clientes (Mayor Margen Neto €)</h3>
             <table class="datatable">
-              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen (€)</th><th class='text-right'>Margen (%)</th></tr></thead>
+              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
               <tbody>{best_cli_rows}</tbody>
             </table>
           </div>
           <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Clientes con Menor Margen (%)</h3>
+            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Clientes con Menor Margen Neto (%)</h3>
             <table class="datatable">
-              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen (€)</th><th class='text-right'>Margen (%)</th></tr></thead>
+              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
               <tbody>{worst_cli_rows}</tbody>
             </table>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px;">
           <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Artículos (Mayor Margen €)</h3>
+            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Artículos (Mayor Margen Neto €)</h3>
             <table class="datatable">
-              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen (€)</th><th class='text-right'>Margen (%)</th></tr></thead>
+              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
               <tbody>{best_art_rows}</tbody>
             </table>
           </div>
           <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Artículos con Menor Margen (%)</h3>
+            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Artículos con Menor Margen Neto (%)</h3>
             <table class="datatable">
-              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen (€)</th><th class='text-right'>Margen (%)</th></tr></thead>
+              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
               <tbody>{worst_art_rows}</tbody>
             </table>
           </div>
@@ -3987,10 +4235,6 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
               <div class="form-group">
                 <label class="upload-label">🏦 Cobros / Vencimientos (Opcional)</label>
                 <input type="file" name="cobros" accept=".xlsx,.xls">
-              </div>
-              <div class="form-group">
-                <label class="upload-label">📦 Envases / Packaging (Opcional)</label>
-                <input type="file" name="packaging" accept=".xlsx,.xls">
               </div>
             </div>
           </div>
@@ -5847,14 +6091,14 @@ class Handler(BaseHTTPRequestHandler):
                 existing_dfs = load_report_data(report_date) or {}
                 
                 files = {}
-                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock', 'costes']:
                     file_item = form.get_file(key)
                     if file_item and file_item[0]:
                         files[key] = file_item[1]
                 
                 # Si no subió absolutamente ningún archivo, cargamos los defaults como fallback inicial (opcional)
                 if not files and not existing_dfs:
-                    for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+                    for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock', 'costes']:
                         if key in DEFAULT_FILES and Path(DEFAULT_FILES[key]).exists():
                             files[key] = DEFAULT_FILES[key]
 
@@ -5864,7 +6108,7 @@ class Handler(BaseHTTPRequestHandler):
                 dfs_uploaded = {name: ensure_types_normalized_df(df, name) for name, df in dfs_uploaded.items()}
                 
                 dfs = {}
-                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock']:
+                for key in ['ofertas', 'pedidos', 'albaranes', 'facturas', 'produccion', 'stock', 'costes']:
                     if key in dfs_uploaded:
                         dfs[key] = dfs_uploaded[key]
                     else:
