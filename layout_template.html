@@ -1306,7 +1306,10 @@
   <!-- Comment Modal -->
   <div id="commentModal" class="modal-overlay" style="display:none; align-items:center; justify-content:center; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:9999;">
     <div class="modal-content" style="background:var(--bg); border-radius:12px; padding:24px; width:400px; max-width:90%; border:1px solid var(--line); box-shadow:0 10px 25px rgba(0,0,0,0.2);">
-      <h3 style="margin-top:0; margin-bottom:16px; color:var(--ink);">Notas de <span id="commentDocLabel" style="color:var(--accent);"></span></h3>
+      <h3 style="margin-top:0; margin-bottom:16px; color:var(--ink); display:flex; align-items:center; gap:8px;">
+        <span id="commentDocTypeBadge" class="badge" style="display:none; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:700; text-transform:uppercase;"></span>
+        <span>Notas de <span id="commentDocLabel" style="color:var(--accent);"></span></span>
+      </h3>
       <div id="commentHistory" style="max-height:200px; overflow-y:auto; margin-bottom:16px; display:flex; flex-direction:column; gap:8px;"></div>
       <textarea id="commentText" rows="3" style="width:100%; padding:12px; border-radius:6px; border:1px solid var(--line); background:var(--bg-card); color:var(--ink); font-family:inherit; resize:vertical; margin-bottom:16px;" placeholder="Escribe una nueva nota aquí..."></textarea>
       <div style="display:flex; justify-content:flex-end; gap:12px;">
@@ -1821,14 +1824,46 @@
     window.commentsData = {comments_json};
 
     let currentCommentDoc = null;
-    function openCommentModal(docId) {
+    let currentCommentTipo = "";
+    function openCommentModal(docId, tipo = "") {
       currentCommentDoc = docId;
+      currentCommentTipo = (tipo || "").toLowerCase().trim();
+      
+      const typeBadge = document.getElementById('commentDocTypeBadge');
+      if (currentCommentTipo) {
+        typeBadge.innerText = currentCommentTipo.toUpperCase();
+        typeBadge.style.display = "inline-block";
+        if (currentCommentTipo === 'oferta') {
+          typeBadge.style.background = "#4c1d95";
+          typeBadge.style.color = "#c4b5fd";
+        } else if (currentCommentTipo === 'pedido') {
+          typeBadge.style.background = "#1e3a8a";
+          typeBadge.style.color = "#93c5fd";
+        } else if (currentCommentTipo === 'albaran') {
+          typeBadge.style.background = "#065f46";
+          typeBadge.style.color = "#6ee7b7";
+        } else if (currentCommentTipo === 'factura') {
+          typeBadge.style.background = "#9a3412";
+          typeBadge.style.color = "#fdba74";
+        } else {
+          typeBadge.style.background = "var(--bg-card)";
+          typeBadge.style.color = "var(--text)";
+        }
+      } else {
+        typeBadge.style.display = "none";
+      }
+      
       document.getElementById('commentDocLabel').innerText = docId;
       document.getElementById('commentText').value = "";
       
       const historyContainer = document.getElementById('commentHistory');
       historyContainer.innerHTML = "";
-      const notes = window.commentsData[docId] || [];
+      
+      const key = currentCommentTipo ? `${currentCommentTipo}:${docId}` : docId;
+      let notes = window.commentsData[key] || [];
+      if (notes.length === 0 && window.commentsData[docId]) {
+        notes = window.commentsData[docId].filter(n => !n.tipo_documento || n.tipo_documento.toLowerCase() === currentCommentTipo);
+      }
       
       if (notes.length > 0) {
         notes.forEach(note => {
@@ -1865,6 +1900,7 @@
     function closeCommentModal() {
       document.getElementById('commentModal').style.display = 'none';
       currentCommentDoc = null;
+      currentCommentTipo = "";
     }
     
     async function saveComment() {
@@ -1878,7 +1914,11 @@
         const response = await fetch('/save-comment', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ documento: currentCommentDoc, comentario: text })
+          body: JSON.stringify({ 
+            documento: currentCommentDoc, 
+            tipo_documento: currentCommentTipo,
+            comentario: text 
+          })
         });
         const result = await response.json();
         if (result.success) {
@@ -1896,7 +1936,8 @@
 
     async function deleteComment() {
       if (!currentCommentDoc) return;
-      if (!confirm("¿Seguro que quieres eliminar TODO el historial de este documento?")) return;
+      const tipoLabel = currentCommentTipo ? ` de este ${currentCommentTipo}` : "";
+      if (!confirm(`¿Seguro que quieres eliminar TODO el historial${tipoLabel}?`)) return;
       
       const btn = document.getElementById('deleteCommentBtn');
       const originalText = btn.innerText;
@@ -1905,7 +1946,10 @@
         const response = await fetch('/delete-comment', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ documento: currentCommentDoc })
+          body: JSON.stringify({ 
+            documento: currentCommentDoc,
+            tipo_documento: currentCommentTipo
+          })
         });
         const result = await response.json();
         if (result.success) {

@@ -2386,13 +2386,19 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         if 'creado_en' in df_comm.columns:
             df_comm = df_comm.sort_values(by='creado_en', ascending=True)
         for _, row in df_comm.iterrows():
-            doc = row.get('documento')
-            if doc and pd.notna(doc):
-                comments_dict.setdefault(doc, []).append({
-                    'id': row.get('id'),
+            doc = str(row.get('documento') or '').strip()
+            tipo = str(row.get('tipo_documento') or row.get('tipo') or '').strip().lower()
+            if doc and pd.notna(doc) and doc != 'nan':
+                entry = {
+                    'id': str(row.get('id')),
+                    'documento': doc,
+                    'tipo_documento': tipo,
                     'comentario': row.get('comentario'),
-                    'creado_en': row.get('creado_en', '')
-                })
+                    'creado_en': str(row.get('creado_en', ''))
+                }
+                if tipo:
+                    comments_dict.setdefault(f"{tipo}:{doc}", []).append(entry)
+                comments_dict.setdefault(doc, []).append(entry)
 
     docs = {name: aggregate_normalized_df(df, name) for name, df in dfs.items() if name != 'document_comments'}
     ofertas = docs.get('ofertas', pd.DataFrame())
@@ -2920,15 +2926,22 @@ def table_row(cells: list[Any], header: bool=False) -> str:
         return html.escape(str(c))
     return '<tr>' + ''.join((f'<{tag}>{format_cell(cell)}</{tag}>' for cell in cells)) + '</tr>'
 
-def render_doc_with_note(doc: str, comments: dict) -> RawHTML:
+def render_doc_with_note(doc: str, comments: dict, tipo: str = '') -> RawHTML:
     escaped_doc = html.escape(str(doc))
-    notes = comments.get(doc)
+    clean_tipo = str(tipo).strip().lower() if tipo else ''
+    key = f"{clean_tipo}:{doc}" if clean_tipo else doc
+    notes = comments.get(key)
+    if notes is None and clean_tipo and doc in comments:
+        # Fallback to doc only for legacy comments without tipo_documento
+        notes = [n for n in comments.get(doc, []) if not n.get('tipo_documento') or n.get('tipo_documento').lower() == clean_tipo]
+    notes = notes or []
+    escaped_tipo = html.escape(clean_tipo)
     if notes and len(notes) > 0:
         latest_note = html.escape(notes[-1]['comentario'])
-        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\')" style="background:var(--accent); color:white; border:none; border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;" title="{latest_note}">💬 Notas ({len(notes)})</button>'
+        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\', \'{escaped_tipo}\')" style="background:var(--accent); color:white; border:none; border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;" title="{latest_note}">💬 Notas ({len(notes)})</button>'
         return RawHTML(f'<div style="display:flex; align-items:center; gap:6px;"><span>{escaped_doc}</span>{btn}</div>')
     else:
-        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\')" style="background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;">+ Nota</button>'
+        btn = f'<button onclick="openCommentModal(\'{escaped_doc}\', \'{escaped_tipo}\')" style="background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:4px; font-size:10px; cursor:pointer; padding:2px 6px;">+ Nota</button>'
         return RawHTML(f'<div style="display:flex; align-items:center; gap:6px;"><span>{escaped_doc}</span>{btn}</div>')
 
 def render_amount_bars(items: list[dict[str, Any]]) -> str:
@@ -3056,12 +3069,12 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
         </script>
         """
 def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
-    delivery_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast.get('top_albaranes', [])]
+    delivery_rows = [[render_doc_with_note(r['documento'], comments, tipo='albaran'), fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast.get('top_albaranes', [])]
     delivery_table = f"<table>{table_row(['Albarán', 'Fecha', 'Cliente', 'Importe pendiente'], True)}{''.join((table_row(row) for row in delivery_rows))}</table>" if delivery_rows else '<p class=\'note\'>No hay albaranes pendientes de facturar localizados.</p>'
     
     order_tr_list = []
     for r in forecast.get('top_pedidos', []):
-        doc_html = render_doc_with_note(r['documento'], comments)
+        doc_html = render_doc_with_note(r['documento'], comments, tipo='pedido')
         doc = r['documento']
         fecha = fmt_date(r.get('fecha_carga_prevista', r.get('fecha_necesaria')))
         base_fecha = 'Estimada' if r.get('fecha_carga_estimada') else 'Fecha Necesaria'
@@ -3101,7 +3114,7 @@ def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
     for r in forecast.get('no_contempladas', []):
         tipo = r.get('tipo', 'Pedido')
         doc = r['documento']
-        doc_html = render_doc_with_note(doc, comments)
+        doc_html = render_doc_with_note(doc, comments, tipo=tipo.lower())
         fecha = fmt_date(r.get('fecha'))
         base_fecha = r.get('base_fecha', 'No contemplado')
         cliente = r.get('razon_social', '')
@@ -3133,10 +3146,10 @@ def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
         )
     no_contempladas_table = f"<table id='non-loadable-orders-table'><thead><tr><th>Previsto</th><th>Tipo / Documento</th><th>Fecha</th><th>Motivo / Estado</th><th>Cliente</th><th class='text-right'>Unid. pendientes</th><th class='text-right'>Importe pendiente</th></tr></thead><tbody>{''.join(no_contempladas_tr_list)}</tbody><tfoot><tr style='font-weight:bold; border-top:2px solid var(--line);'><td colspan='6' class='text-right'>Total Seleccionado No Contempladas:</td><td class='text-right' id='no-contempladas-total-sum'>0,00 EUR</td></tr></tfoot></table>" if no_contempladas_tr_list else '<p class=\'note\'>No hay otras ofertas o pedidos pendientes no contemplados.</p>'
 
-    older_order_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), 'Entregas parciales', r['razon_social'], f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.'), money(r['importe_pendiente'])] for r in forecast.get('top_pedidos_antiguos', [])]
+    older_order_rows = [[render_doc_with_note(r['documento'], comments, tipo='pedido'), fmt_date(r['fecha']), 'Entregas parciales', r['razon_social'], f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.'), money(r['importe_pendiente'])] for r in forecast.get('top_pedidos_antiguos', [])]
     older_order_table = f"<table>{table_row(['Pedido', 'Fecha creación', 'Situación', 'Cliente', 'Unid. pendientes', 'Importe pendiente'], True)}{''.join((table_row(row) for row in older_order_rows))}</table>" if older_order_rows else '<p class=\'note\'>No hay pedidos antiguos en backlog localizados.</p>'
     
-    offer_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast.get('ofertas_aprobadas', {}).get('top', [])]
+    offer_rows = [[render_doc_with_note(r['documento'], comments, tipo='oferta'), fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast.get('ofertas_aprobadas', {}).get('top', [])]
     offer_table = f"<table>{table_row(['Oferta', 'Fecha oferta', 'Entrega teórica', 'Ventana', 'Cliente', 'Importe'], True)}{''.join((table_row(row) for row in offer_rows))}</table>" if offer_rows else '<p class=\'note\'>No hay ofertas aprobadas localizadas con respaldo en pedidos.</p>'
     
     return f'\n      <h3>Listado completo de albaranes pendientes de facturar</h3>\n      {delivery_table}\n      <h3 id="cargables-table-section">Listado completo de pedidos fabricables/cargables este mes (&lt;= 1 mes)</h3>\n      <p class="note" style="margin-bottom:8px;">Pedidos contemplados para el cierre del mes. Marcados por defecto para sumar en la previsión.</p>\n      {order_table}\n      <h3 id="no-contempladas-table-section" style="margin-top:28px;">Ofertas y pedidos pendientes NO contemplados para el cierre (fuera de fecha / backlog / ofertas abiertas)</h3>\n      <p class="note" style="margin-bottom:8px;">Listado completo de ofertas y pedidos pendientes que no entran automáticamente en el cierre por fecha o estado. Desmarcados por defecto. Puede marcar cualquiera para incluirlo y que sume a la previsión de cierre y a los totales seleccionados.</p>\n      {no_contempladas_table}\n      <h3>Listado completo de pedidos antiguos de meses anteriores (Backlog / Entregas parciales)</h3>\n      {older_order_table}\n      <h3>Listado completo de ofertas aprobadas con entrega teórica +15 días</h3>\n      {offer_table}\n    '
@@ -3146,8 +3159,8 @@ def render_delivery_schedule(schedule: list[dict[str, Any]], comments: dict) -> 
     else:
         rows = []
         for item in schedule:
-            tipo = item['tipo']
-            doc_html = render_doc_with_note(item['documento'], comments)
+            tipo = item.get('tipo', 'Pedido')
+            doc_html = render_doc_with_note(item['documento'], comments, tipo=tipo.lower())
             cliente = item['cliente']
             creacion = fmt_date(item['fecha_creacion'])
             aceptacion = fmt_date(item['fecha_aceptacion']) if item['fecha_aceptacion'] is not None else '-'
@@ -3359,7 +3372,7 @@ def render_order_aging_panel(aging: dict[str, Any], comments: dict) -> str:
     del_rows = ""
     if delayed:
         for p in delayed:
-            doc_html = render_doc_with_note(p['documento'], comments)
+            doc_html = render_doc_with_note(p['documento'], comments, tipo='pedido')
             badge_delay = f"<span class='badge' style='background:rgba(239,68,68,0.15); color:var(--danger); font-weight:bold;'>{p['dias_abierto']} días</span>"
             del_rows += f"<tr><td>{doc_html}</td><td>{html.escape(p['cliente'])}</td><td>{html.escape(p['zona'])}</td><td>{fmt_date(p['fecha'])}</td><td>{badge_delay}</td><td class='text-right'>{money(p['importe'])}</td></tr>"
         table_html = f"<table class='datatable'><thead><tr><th>Pedido</th><th>Cliente</th><th>Zona</th><th>Fecha Pedido</th><th>Antigüedad</th><th class='text-right'>Importe Pendiente</th></tr></thead><tbody>{del_rows}</tbody></table>"
@@ -5165,7 +5178,7 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], comments: dict, limit
         cards_html = []
         for r in show_list:
             doc = r['documento']
-            doc_html = render_doc_with_note(doc, comments)
+            doc_html = render_doc_with_note(doc, comments, tipo='pedido')
             cards_html.append(f"""
             <div class="alert-card alert-danger">
               <div class="alert-header">
@@ -5189,7 +5202,7 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], comments: dict, limit
     if deviations:
         dev_html = []
         for d in deviations[:limit] if limit else deviations:
-            doc_html = render_doc_with_note(d['documento'], comments)
+            doc_html = render_doc_with_note(d['documento'], comments, tipo='pedido')
             fecha = fmt_date(d.get('fecha'))
             art = html.escape(str(d.get('articulo', '')))
             desc = html.escape(str(d.get('descripcion', '')))
@@ -5229,7 +5242,7 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], comments: dict, limit
         show_list = stale_sorted[:limit] if limit else stale_sorted
         cards_html = []
         for r in show_list:
-            doc_html = render_doc_with_note(r['documento'], comments)
+            doc_html = render_doc_with_note(r['documento'], comments, tipo='albaran')
             cards_html.append(f"""
             <div class="alert-card alert-warn">
               <div class="alert-header">
@@ -5256,7 +5269,7 @@ def render_alerts(alerts: dict[str, list[dict[str, Any]]], comments: dict, limit
         show_list = stagnant_sorted[:limit] if limit else stagnant_sorted
         cards_html = []
         for r in show_list:
-            doc_html = render_doc_with_note(r['documento'], comments)
+            doc_html = render_doc_with_note(r['documento'], comments, tipo='oferta')
             cards_html.append(f"""
             <div class="alert-card alert-info">
               <div class="alert-header">
@@ -5630,14 +5643,18 @@ class Handler(BaseHTTPRequestHandler):
                     post_data = self.rfile.read(content_length).decode('utf-8')
                     data = json.loads(post_data)
                     documento = data.get('documento')
+                    tipo_documento = (data.get('tipo_documento') or data.get('tipo') or '').strip().lower()
                     comentario = data.get('comentario')
                     if not documento or not comentario:
                         raise ValueError("Falta documento o comentario")
                     if SUPABASE_ENABLED:
-                        supabase_request('document_comments', method='POST', data=[{
+                        insert_data = {
                             'documento': documento,
                             'comentario': comentario
-                        }])
+                        }
+                        if tipo_documento:
+                            insert_data['tipo_documento'] = tipo_documento
+                        supabase_request('document_comments', method='POST', data=[insert_data])
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
@@ -5655,12 +5672,15 @@ class Handler(BaseHTTPRequestHandler):
                     post_data = self.rfile.read(content_length).decode('utf-8')
                     data = json.loads(post_data)
                     documento = data.get('documento')
+                    tipo_documento = (data.get('tipo_documento') or data.get('tipo') or '').strip().lower()
                     comment_id = data.get('id')
                     if not documento and not comment_id:
                         raise ValueError("Falta documento o id")
                     if SUPABASE_ENABLED:
                         if comment_id:
                             supabase_request('document_comments', method='DELETE', query_params={'id': f'eq.{comment_id}'})
+                        elif tipo_documento:
+                            supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}', 'tipo_documento': f'eq.{tipo_documento}'})
                         else:
                             supabase_request('document_comments', method='DELETE', query_params={'documento': f'eq.{documento}'})
                     self.send_response(200)
