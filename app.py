@@ -47,6 +47,10 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://uupvjjoobghqojoqnrvy.supa
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV1cHZqam9vYmdocW9qb3FucnZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3Mzk1NzUsImV4cCI6MjEwMzMxNTU3NX0.z4Dg0FMoHovcKtPbJt2p8JXRVdiqlcEKINtfVaFfuEs')
 SUPABASE_ENABLED = os.environ.get('SUPABASE_ENABLED', '1').strip().lower() in {'true', 'on', 'yes', '1'}
 LOCAL_DATA_DIR = BASE_DIR / 'data'
+try:
+    LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 def make_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
     ignore_eof = getattr(ssl, 'OP_IGNORE_UNEXPECTED_EOF', 0)
@@ -157,16 +161,20 @@ def load_data_from_local(report_date: str) -> dict[str, pd.DataFrame] | None:
         elif name == 'costes':
             # Fallback a costes subidos en cualquier fecha reciente
             costes_found = False
-            for d_dir in sorted(LOCAL_DATA_DIR.iterdir(), reverse=True):
-                if d_dir.is_dir() and (d_dir / 'costes.json').exists():
-                    try:
-                        c_recs = json.loads((d_dir / 'costes.json').read_text(encoding='utf-8'))
-                        if c_recs:
-                            dfs[name] = pd.DataFrame(c_recs)
-                            costes_found = True
-                            break
-                    except Exception:
-                        pass
+            if LOCAL_DATA_DIR.exists():
+                try:
+                    for d_dir in sorted(LOCAL_DATA_DIR.iterdir(), reverse=True):
+                        if d_dir.is_dir() and (d_dir / 'costes.json').exists():
+                            try:
+                                c_recs = json.loads((d_dir / 'costes.json').read_text(encoding='utf-8'))
+                                if c_recs:
+                                    dfs[name] = pd.DataFrame(c_recs)
+                                    costes_found = True
+                                    break
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             if not costes_found:
                 dfs[name] = pd.DataFrame()
         else:
