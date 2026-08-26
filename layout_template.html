@@ -2204,14 +2204,25 @@
         let checkedNac = 0;
         let checkedExp = 0;
 
+        let sumCargables = 0;
+        let sumNoContempladas = 0;
+
         document.querySelectorAll('.order-chk').forEach(chk => {
           const doc = chk.getAttribute('data-doc');
           const importe = parseFloat(chk.getAttribute('data-importe')) || 0;
+          const isLoadable = chk.closest('#loadable-orders-table') !== null;
+          
           if (chk.checked) {
             checkedAmount += importe;
             checkedCount++;
             if (chk.getAttribute('data-zona') === 'nacional') checkedNac += importe;
             else checkedExp += importe;
+
+            if (isLoadable) {
+              sumCargables += importe;
+            } else {
+              sumNoContempladas += importe;
+            }
           }
         });
         
@@ -2453,10 +2464,15 @@
           kpiCargaPendiente.textContent = formatMoney(albaranes + checkedAmount);
         }
 
-        // 7. Actualizar el sumatorio de la tabla local
+        // 7. Actualizar el sumatorio de las tablas locales
         const cargablesTotalSum = document.getElementById('cargables-total-sum');
         if (cargablesTotalSum) {
-          cargablesTotalSum.textContent = formatMoney(checkedAmount);
+          cargablesTotalSum.textContent = formatMoney(sumCargables);
+        }
+
+        const noContempladasTotalSum = document.getElementById('no-contempladas-total-sum');
+        if (noContempladasTotalSum) {
+          noContempladasTotalSum.textContent = formatMoney(sumNoContempladas);
         }
 
         // 8. Actualizar KPIs nuevos

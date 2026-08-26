@@ -588,6 +588,13 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         if kind == 'pedidos' and 'importe_pendiente' in out.columns:
             out['importe_pendiente'] = pd.to_numeric(out['importe_pendiente'], errors='coerce').fillna(0.0)
             out.loc[mask, 'importe_pendiente'] = out.loc[mask, 'importe_pendiente'] / 1.10
+    
+    # Excluir cliente Sustainable Agro Solutions
+    if 'razon_social' in out.columns:
+        out = out[~out['razon_social'].astype(str).str.upper().str.contains('SUSTAINABLE AGRO SOLUTIONS', na=False)].copy()
+    if 'cliente' in out.columns:
+        out = out[~out['cliente'].astype(str).isin(['430000427', '430000427.0'])].copy()
+
     return out
 
 def aggregate_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
@@ -2358,6 +2365,20 @@ def calc_split(df: pd.DataFrame, amount_col: str, doc_type: str = None) -> dict[
     }
 
 def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) -> dict[str, Any]:
+    # Excluir cliente Sustainable Agro Solutions de todos los DataFrames
+    cleaned_dfs = {}
+    for name, df in dfs.items():
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            df_c = df.copy()
+            if 'razon_social' in df_c.columns:
+                df_c = df_c[~df_c['razon_social'].astype(str).str.upper().str.contains('SUSTAINABLE AGRO SOLUTIONS', na=False)]
+            if 'cliente' in df_c.columns:
+                df_c = df_c[~df_c['cliente'].astype(str).isin(['430000427', '430000427.0'])]
+            cleaned_dfs[name] = df_c
+        else:
+            cleaned_dfs[name] = df
+    dfs = cleaned_dfs
+
     month_str = current.strftime('%Y-%m')
     comments_dict = {}
     if 'document_comments' in dfs and not dfs['document_comments'].empty:
@@ -2453,6 +2474,67 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     }
     month_pedidos_split = calc_split(month['pedidos'], 'importe_pendiente')
     ofertas_aprobadas_split = calc_split(approved_offers, 'importe')
+
+    # Prepare non-contemplated orders and offers
+    loadable_docs = set(loadable_orders['documento']) if not loadable_orders.empty else set()
+    pending_pedidos_df = pedidos[(pedidos['importe_pendiente'] > 0) | (pedidos.get('unidades_pendientes', 0) > 0)].copy() if not pedidos.empty else pd.DataFrame()
+    non_loadable_orders_df = pending_pedidos_df[~pending_pedidos_df['documento'].isin(loadable_docs)].copy() if not pending_pedidos_df.empty else pd.DataFrame()
+    pending_ofertas_df = ofertas[ofertas['importe'] > 0].copy() if not ofertas.empty else pd.DataFrame()
+
+    no_contempladas_items = []
+    if not non_loadable_orders_df.empty:
+        for _, r in non_loadable_orders_df.iterrows():
+            doc = r['documento']
+            needed = r.get('fecha_necesaria')
+            order_date = r.get('fecha')
+            has_needed = pd.notna(needed)
+            target_date = needed if has_needed else order_date
+            
+            if has_needed:
+                if needed > month_end(current):
+                    reason = "Fecha posterior"
+                else:
+                    reason = "Backlog / Fuera de ventana"
+            else:
+                reason = "Sin Fecha Necesaria"
+                
+            no_contempladas_items.append({
+                'tipo': 'Pedido',
+                'documento': doc,
+                'fecha': target_date,
+                'fecha_creacion': order_date,
+                'fecha_necesaria': needed,
+                'base_fecha': reason,
+                'cliente': r.get('cliente', ''),
+                'razon_social': r.get('razon_social', ''),
+                'articulos_list': r.get('articulos_list', []),
+                'unidades_pendientes': float(r.get('unidades_pendientes', 0) or 0),
+                'importe_pendiente': float(r.get('importe_pendiente', r.get('importe', 0)) or 0),
+                'zona': r.get('zona', 'Nacional'),
+            })
+
+    if not pending_ofertas_df.empty:
+        for _, r in pending_ofertas_df.iterrows():
+            doc = r['documento']
+            offer_date = r.get('fecha')
+            theor_date = offer_date + pd.Timedelta(days=15) if pd.notna(offer_date) else None
+            
+            no_contempladas_items.append({
+                'tipo': 'Oferta',
+                'documento': doc,
+                'fecha': theor_date or offer_date,
+                'fecha_creacion': offer_date,
+                'fecha_necesaria': theor_date,
+                'base_fecha': 'Oferta abierta',
+                'cliente': r.get('cliente', ''),
+                'razon_social': r.get('razon_social', ''),
+                'articulos_list': r.get('articulos_list', []),
+                'unidades_pendientes': float(r.get('unidades_pedidas', 0) or 0),
+                'importe_pendiente': float(r.get('importe', 0) or 0),
+                'zona': r.get('zona', 'Nacional'),
+            })
+
+    no_contempladas_items.sort(key=lambda x: x['importe_pendiente'], reverse=True)
 
     stock_comparison = []
     pendientes_por_articulo = {}
@@ -2766,7 +2848,8 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
             "top_albaranes": top_rows(pending_albaranes, "importe", 10),
             "top_pedidos": loadable_orders.sort_values(by=['fecha_carga_estimada', 'fecha_carga_prevista'], ascending=[True, True]).to_dict("records") if not loadable_orders.empty else [],
             "top_pedidos_antiguos": top_rows(older_orders, "importe_pendiente", 10),
-            "ofertas_aprobadas_list": approved_offers.to_dict("records") if not approved_offers.empty else []
+            "ofertas_aprobadas_list": approved_offers.to_dict("records") if not approved_offers.empty else [],
+            "no_contempladas": no_contempladas_items
         },
         "status": status_summary,
         "charts": {
@@ -2973,12 +3056,11 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
         </script>
         """
 def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
-    # ***<module>.render_forecast_details: Failure: Different control flow
-    delivery_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast['top_albaranes']]
+    delivery_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), r['razon_social'], money(r['importe'])] for r in forecast.get('top_albaranes', [])]
     delivery_table = f"<table>{table_row(['Albarán', 'Fecha', 'Cliente', 'Importe pendiente'], True)}{''.join((table_row(row) for row in delivery_rows))}</table>" if delivery_rows else '<p class=\'note\'>No hay albaranes pendientes de facturar localizados.</p>'
     
     order_tr_list = []
-    for r in forecast['top_pedidos']:
+    for r in forecast.get('top_pedidos', []):
         doc_html = render_doc_with_note(r['documento'], comments)
         doc = r['documento']
         fecha = fmt_date(r.get('fecha_carga_prevista', r.get('fecha_necesaria')))
@@ -2999,7 +3081,8 @@ def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
         badge_next_month = '<span class="badge warning" style="background:#5c3e09;color:#ffb84d;margin-left:5px;">Siguiente Mes</span>' if is_next_month else ''
         badge_fecha_str = f'<span class="badge {("warning" if r.get("fecha_carga_estimada") else "success")}">{html.escape(base_fecha)}</span>{badge_next_month}'
         
-        checkbox_html = f'<input type="checkbox" class="order-chk" data-doc="{html.escape(doc)}" data-importe="{importe}" data-zona="{html.escape(r.get("zona", "").lower())}" {checked_str}>'
+        zona_clean = 'nacional' if 'nac' in r.get("zona", "").lower() else 'exportacion'
+        checkbox_html = f'<input type="checkbox" class="order-chk" data-doc="{html.escape(doc)}" data-tipo="pedido" data-importe="{importe}" data-zona="{zona_clean}" {checked_str}>'
         
         order_tr_list.append(
             f'<tr>'
@@ -3014,12 +3097,49 @@ def render_forecast_details(forecast: dict[str, Any], comments: dict) -> str:
         )
     order_table = f"<table id='loadable-orders-table'><thead><tr><th>Previsto</th><th>Pedido</th><th>Fecha carga prevista</th><th>Base fecha</th><th>Cliente</th><th class='text-right'>Unid. pendientes</th><th class='text-right'>Importe pendiente</th></tr></thead><tbody>{''.join(order_tr_list)}</tbody><tfoot><tr style='font-weight:bold; border-top:2px solid var(--line);'><td colspan='6' class='text-right'>Total Seleccionado:</td><td class='text-right' id='cargables-total-sum'>0,00 EUR</td></tr></tfoot></table>" if order_tr_list else '<p class=\'note\'>No hay pedidos pendientes con fecha real o estimada de disponibilidad hasta fin de mes.</p>'
 
+    no_contempladas_tr_list = []
+    for r in forecast.get('no_contempladas', []):
+        tipo = r.get('tipo', 'Pedido')
+        doc = r['documento']
+        doc_html = render_doc_with_note(doc, comments)
+        fecha = fmt_date(r.get('fecha'))
+        base_fecha = r.get('base_fecha', 'No contemplado')
+        cliente = r.get('razon_social', '')
+        unidades = f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.')
+        importe = float(r.get('importe_pendiente', 0))
+        importe_str = money(importe)
+        
+        articles_html = ""
+        art_list = r.get('articulos_list', [])
+        if art_list:
+            articles_html = f"<div style='font-size: 11px; color: var(--muted); margin-top: 4px; border-top: 1px dashed var(--line); padding-top: 4px;'><strong>Artículos:</strong> {', '.join((html.escape(str(x)) for x in art_list))}</div>"
+        
+        tipo_badge = f'<span class="badge" style="background:{"#1e3a8a;color:#93c5fd" if tipo == "Pedido" else "#4c1d95;color:#c4b5fd"};font-weight:600;margin-right:6px;">{tipo}</span>'
+        badge_motivo = f'<span class="badge warning" style="font-size:11px;">{html.escape(base_fecha)}</span>'
+        
+        zona_clean = 'nacional' if 'nac' in r.get("zona", "").lower() else 'exportacion'
+        checkbox_html = f'<input type="checkbox" class="order-chk" data-doc="{html.escape(doc)}" data-tipo="{tipo.lower()}" data-importe="{importe}" data-zona="{zona_clean}">'
+        
+        no_contempladas_tr_list.append(
+            f'<tr>'
+            f'<td>{checkbox_html}</td>'
+            f'<td><div style="display:flex;align-items:center;gap:4px;">{tipo_badge}{doc_html}</div></td>'
+            f'<td>{html.escape(str(fecha))}</td>'
+            f'<td>{badge_motivo}</td>'
+            f'<td>{html.escape(str(cliente))}{articles_html}</td>'
+            f'<td class="text-right">{html.escape(unidades)}</td>'
+            f'<td class="text-right font-mono" data-importe-raw="{importe}">{html.escape(importe_str)}</td>'
+            f'</tr>'
+        )
+    no_contempladas_table = f"<table id='non-loadable-orders-table'><thead><tr><th>Previsto</th><th>Tipo / Documento</th><th>Fecha</th><th>Motivo / Estado</th><th>Cliente</th><th class='text-right'>Unid. pendientes</th><th class='text-right'>Importe pendiente</th></tr></thead><tbody>{''.join(no_contempladas_tr_list)}</tbody><tfoot><tr style='font-weight:bold; border-top:2px solid var(--line);'><td colspan='6' class='text-right'>Total Seleccionado No Contempladas:</td><td class='text-right' id='no-contempladas-total-sum'>0,00 EUR</td></tr></tfoot></table>" if no_contempladas_tr_list else '<p class=\'note\'>No hay otras ofertas o pedidos pendientes no contemplados.</p>'
+
     older_order_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), 'Entregas parciales', r['razon_social'], f"{float(r.get('unidades_pendientes', 0)):,.0f}".replace(',', '.'), money(r['importe_pendiente'])] for r in forecast.get('top_pedidos_antiguos', [])]
     older_order_table = f"<table>{table_row(['Pedido', 'Fecha creación', 'Situación', 'Cliente', 'Unid. pendientes', 'Importe pendiente'], True)}{''.join((table_row(row) for row in older_order_rows))}</table>" if older_order_rows else '<p class=\'note\'>No hay pedidos antiguos en backlog localizados.</p>'
     
-    offer_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast['ofertas_aprobadas']['top']]
+    offer_rows = [[render_doc_with_note(r['documento'], comments), fmt_date(r['fecha']), fmt_date(r['fecha_entrega_teorica']), 'Este mes' if r.get('entrega_en_mes') else 'Fuera del mes', r['razon_social'], money(r['importe'])] for r in forecast.get('ofertas_aprobadas', {}).get('top', [])]
     offer_table = f"<table>{table_row(['Oferta', 'Fecha oferta', 'Entrega teórica', 'Ventana', 'Cliente', 'Importe'], True)}{''.join((table_row(row) for row in offer_rows))}</table>" if offer_rows else '<p class=\'note\'>No hay ofertas aprobadas localizadas con respaldo en pedidos.</p>'
-    return f'\n      <h3>Listado completo de albaranes pendientes de facturar</h3>\n      {delivery_table}\n      <h3 id="cargables-table-section">Listado completo de pedidos fabricables/cargables este mes (&lt;= 1 mes)</h3>\n      {order_table}\n      <h3>Listado completo de pedidos antiguos de meses anteriores (Backlog / Entregas parciales)</h3>\n      {older_order_table}\n      <h3>Listado completo de ofertas aprobadas con entrega teórica +15 días</h3>\n      {offer_table}\n    '
+    
+    return f'\n      <h3>Listado completo de albaranes pendientes de facturar</h3>\n      {delivery_table}\n      <h3 id="cargables-table-section">Listado completo de pedidos fabricables/cargables este mes (&lt;= 1 mes)</h3>\n      <p class="note" style="margin-bottom:8px;">Pedidos contemplados para el cierre del mes. Marcados por defecto para sumar en la previsión.</p>\n      {order_table}\n      <h3 id="no-contempladas-table-section" style="margin-top:28px;">Ofertas y pedidos pendientes NO contemplados para el cierre (fuera de fecha / backlog / ofertas abiertas)</h3>\n      <p class="note" style="margin-bottom:8px;">Listado completo de ofertas y pedidos pendientes que no entran automáticamente en el cierre por fecha o estado. Desmarcados por defecto. Puede marcar cualquiera para incluirlo y que sume a la previsión de cierre y a los totales seleccionados.</p>\n      {no_contempladas_table}\n      <h3>Listado completo de pedidos antiguos de meses anteriores (Backlog / Entregas parciales)</h3>\n      {older_order_table}\n      <h3>Listado completo de ofertas aprobadas con entrega teórica +15 días</h3>\n      {offer_table}\n    '
 def render_delivery_schedule(schedule: list[dict[str, Any]], comments: dict) -> str:
     if not schedule:
         return '<p class=\'note\'>No hay entregas planificadas en el calendario.</p>'
