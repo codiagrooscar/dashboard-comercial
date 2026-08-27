@@ -5034,6 +5034,12 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                 top_chart_html = ""
                 
             monthly_evo = prod_metrics.get('monthly_evolution', [])
+            total_ytd_fabricado = sum(m.get('total', 0) for m in monthly_evo)
+            total_ytd_fmt = f"{total_ytd_fabricado:,.0f}".replace(",", ".")
+            ytd_badge_html = f"""<div style="display: inline-flex; align-items: center; gap: 8px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); padding: 4px 12px; border-radius: 6px;">
+                        <span style="font-size: 12px; color: #94a3b8; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;">Total Fabricado:</span>
+                        <span style="font-size: 15px; font-weight: 700; color: #38bdf8;">{total_ytd_fmt} uds</span>
+                      </div>""" if total_ytd_fabricado > 0 else ""
             if monthly_evo:
                 month_names_chart = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
                 monthly_labels = [month_names_chart[m['mes'] - 1] for m in monthly_evo]
@@ -5235,7 +5241,10 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     {evo_table}
                   </section>
                   <section class="panel" style="margin-bottom: 0;">
-                    <h2>Producción Mensual (YTD)</h2>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                      <h2 style="margin: 0;">Producción Mensual (YTD)</h2>
+                      {ytd_badge_html}
+                    </div>
                     {monthly_chart_html}
                   </section>
                 </div>
