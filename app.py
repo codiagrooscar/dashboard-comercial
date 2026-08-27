@@ -2493,29 +2493,52 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         })
     metrics['daily_evolution'] = daily_evolution
     
+    stock_fam_map = {}
+    stock_df = dfs.get('stock')
+    if stock_df is not None and not stock_df.empty and 'codigo' in stock_df.columns and 'familia' in stock_df.columns:
+        for _, r in stock_df.iterrows():
+            c = str(r.get('codigo', '')).strip()
+            f = str(r.get('familia', '')).strip()
+            if f.endswith('.0'): f = f[:-2]
+            if c and f:
+                stock_fam_map[c] = f
+
+    def classify_fam_type(row):
+        f = str(row.get('codigofamilia', row.get('familia', ''))).strip()
+        if f.endswith('.0'): f = f[:-2]
+        if f in ['40', '41']: return 'Líquidos'
+        elif f in ['38', '42']: return 'Sólidos'
+        elif f in ['39', '43']: return 'Flows'
+        elif f in ['45', '46']: return 'SAS'
+        
+        c = str(row.get('codigoarticulo', row.get('codigo', ''))).strip()
+        desc = str(row.get('descripcionarticulo', row.get('descripcion', ''))).strip().upper()
+        
+        fam = stock_fam_map.get(c)
+        if not fam and len(c) > 4 and c[-4:].isdigit():
+            fam = stock_fam_map.get(c[:-4])
+        if fam:
+            if fam in ['40', '41']: return 'Líquidos'
+            elif fam in ['38', '42']: return 'Sólidos'
+            elif fam in ['39', '43']: return 'Flows'
+            elif fam in ['45', '46']: return 'SAS'
+            
+        if 'SAS' in c.upper() or 'SAS' in desc:
+            return 'SAS'
+        if 'FLOW' in c.upper() or 'FLOW' in desc:
+            return 'Flows'
+        if any(k in desc for k in ['KG', 'KILO', 'SOLIDO', 'SÓLIDO', 'BAG', 'POLVO']):
+            return 'Sólidos'
+        return 'Líquidos'
+
     # Produccion mensual (desde enero del año en curso)
     monthly_evolution = [{'mes': m, 'Líquidos': 0, 'Sólidos': 0, 'Flows': 0, 'SAS': 0, 'total': 0} for m in range(1, 13)]
     
-    if not prod.empty and 'unidadesfabricadas' in prod.columns and 'fecha' in prod.columns and 'costerealtotal' in prod.columns:
+    if not prod.empty and 'unidadesfabricadas' in prod.columns and 'fecha' in prod.columns:
         current_year = current.year
         ytd = prod[prod['fecha'].dt.year == current_year].copy()
         if not ytd.empty:
-            if 'familia' not in ytd.columns:
-                if 'codigofamilia' in ytd.columns:
-                    ytd['familia'] = ytd['codigofamilia']
-                else:
-                    ytd['familia'] = '0'
-            
-            def get_fam_type(f):
-                f = str(f).strip()
-                if f.endswith('.0'): f = f[:-2]
-                if f in ['40', '41']: return 'Líquidos'
-                elif f in ['38', '42']: return 'Sólidos'
-                elif f in ['39', '43']: return 'Flows'
-                elif f in ['45', '46']: return 'SAS'
-                else: return 'Otros'
-                
-            ytd['tipo_fam'] = ytd['familia'].apply(get_fam_type)
+            ytd['tipo_fam'] = ytd.apply(classify_fam_type, axis=1)
             
             grouped_month = ytd.groupby([ytd['fecha'].dt.month, 'tipo_fam'])['unidadesfabricadas'].sum().reset_index()
             for _, row in grouped_month.iterrows():
@@ -2534,17 +2557,8 @@ def get_produccion_metrics(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     metrics['eficiencia_oee'] = 0.0
 
     if not mtd.empty and 'descripcionarticulo' in mtd.columns and 'costerealtotal' in mtd.columns:
-        def get_fam_type_for_rates(f):
-            f = str(f).strip()
-            if f.endswith('.0'): f = f[:-2]
-            if f in ['40', '41']: return 'Líquidos'
-            elif f in ['38', '42']: return 'Sólidos'
-            elif f in ['39', '43']: return 'Flows'
-            elif f in ['45', '46']: return 'SAS'
-            else: return 'Otros'
-        
         def calculate_hours(row):
-            t = get_fam_type_for_rates(row.get('codigofamilia', '0'))
+            t = classify_fam_type(row)
             if t == 'Líquidos': pr, er = 6000.0, 1500.0
             elif t == 'Sólidos': pr, er = 1500.0, 600.0
             elif t == 'Flows': pr, er = 1000.0, 800.0
@@ -3010,9 +3024,6 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
                 
         stock_insights['rotura'].sort(key=lambda x: x['cobertura'])
         stock_insights['obsoleto_items'].sort(key=lambda x: x['valor'], reverse=True)
-
-    tiempos[tipo]['cambios'] += t_cambio
-    tiempos[tipo]['total_hours'] += pt
 
     return {
         "stock_comparison": stock_comparison,
