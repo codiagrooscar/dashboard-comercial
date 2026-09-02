@@ -2687,7 +2687,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         6: 2150256.0,
         7: 1636909.0,
         8: 776076.0,
-        9: 1800000.0,
+        9: 1026568.49,
         10: 1800000.0,
         11: 1800000.0,
         12: 1500000.0,
