@@ -1258,12 +1258,15 @@
         bottom: 4px !important;
     }
     th > button.datatable-sorter {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-        min-height: 24px !important;
+        padding: 4px 8px !important;
+        min-height: 22px !important;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        letter-spacing: 0.3px;
+        width: 100% !important;
     }
     .datatable-sorter::after {
         border-bottom: 4px solid var(--ink) !important;
@@ -1285,12 +1288,15 @@
         bottom: 4px !important;
     }
     th > button.datatable-sorter {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-        min-height: 24px !important;
+        padding: 4px 8px !important;
+        min-height: 22px !important;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        letter-spacing: 0.3px;
+        width: 100% !important;
     }
     .datatable-sorter::after {
         border-bottom: 4px solid var(--ink) !important;
@@ -1539,12 +1545,15 @@
         bottom: 4px !important;
     }
     th > button.datatable-sorter {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-        min-height: 24px !important;
+        padding: 4px 8px !important;
+        min-height: 22px !important;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        letter-spacing: 0.3px;
+        width: 100% !important;
     }
     .datatable-sorter::after {
         border-bottom: 4px solid var(--ink) !important;
@@ -1566,12 +1575,15 @@
         bottom: 4px !important;
     }
     th > button.datatable-sorter {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-        min-height: 24px !important;
+        padding: 4px 8px !important;
+        min-height: 22px !important;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        letter-spacing: 0.3px;
+        width: 100% !important;
     }
     .datatable-sorter::after {
         border-bottom: 4px solid var(--ink) !important;
@@ -2618,10 +2630,12 @@
                     }
                 });
 
+                const perPageVal = parseInt(table.getAttribute('data-per-page') || '10');
                 const dt = new simpleDatatables.DataTable(table, {
                     searchable: true,
                     fixedHeight: false,
-                    perPage: 10,
+                    perPage: perPageVal,
+                    perPageSelect: [5, 10, 20, 50],
                     labels: {
                         placeholder: "Buscar...",
                         perPage: "filas por pág.",

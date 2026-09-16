@@ -280,7 +280,7 @@ def ensure_types_normalized_df(df: pd.DataFrame, kind: str) -> pd.DataFrame:
             df['serie'] = df['serie'].fillna('').astype(str).str.strip()
             if 'zona' not in df.columns:
                 df['zona'] = ''
-            df['zona'] = df['zona'].fillna('').astype(str).str.strip()
+            df['zona'] = df.apply(lambda r: determine_client_zone(r.get('cliente'), r.get('razon_social'), r.get('zona', ''), r.get('cif', ''), r.get('serie', '')), axis=1)
             if kind in ['pedidos', 'ofertas']:
                 if 'descripcion' not in df.columns:
                     df['descripcion'] = ''
@@ -636,9 +636,9 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
     out['serie'] = df[series_col].fillna('').astype(str).str.strip() if series_col else ''
     if kind == 'facturas':
         out['cif'] = df[cif_col].fillna('').astype(str).str.strip() if cif_col else ''
-        out['zona'] = out['cif'].apply(lambda val: 'Nacional' if val.upper().startswith('ES') else 'Exportación')
+        out['zona'] = out.apply(lambda r: determine_client_zone(r.get('cliente'), r.get('razon_social'), cif=r.get('cif', ''), series=r.get('serie', '')), axis=1)
     else:
-        out['zona'] = out['serie'].apply(lambda val: 'Exportación' if 'EX' in norm(val).upper() else 'Nacional')
+        out['zona'] = out.apply(lambda r: determine_client_zone(r.get('cliente'), r.get('razon_social'), series=r.get('serie', '')), axis=1)
     if kind == 'pedidos':
         out['fecha_necesaria'] = df[needed_date_col] if needed_date_col else pd.NaT
         out['importe_pendiente'] = df[pending_amount_col] if pending_amount_col else out['importe']
@@ -713,6 +713,45 @@ def norm(value: Any) -> str:
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
     text = re.sub('[^a-zA-Z0-9]+', '', text).lower()
     return text
+
+EXPORT_CLIENT_KEYWORDS = [
+    'BAYER', 'DOTRA', 'CITAR', 'ÇITAR', 'CICEK', 'ÇIÇEK', 'DIPLOMATS',
+    'EUROFERTIL', 'MARCOSER', 'ZTB', 'AQRO', 'BBMAGRI', 'LEKKERBIO',
+    'CAMPO ABIERTO', 'BRENNTAG', 'MAGHREB', 'PLANTA SANA', 'ECUAQUIMICA',
+    'JUAN JIMENEZ', 'HORTIFRUT', 'BCOMERCE', 'AUDITORIA Y CERTIFICACION',
+    'EMPHYTON', 'POULTSIDIS', 'BELAGRI', 'BORN AGROCHEMISTRY',
+    'DOGA TARIM', 'AIFAR', 'KUWAIT FARM', 'MOHAMMAD HASHEM',
+    'SERVICIOS AGROPECUARIOS EL LLANO', 'BOUAZZA FILAHA', 'CHEMIPRIME'
+]
+
+EXPORT_CLIENT_CODES = {
+    '430000383', '430000008', '430000424', '430000009', '430000037',
+    '430000028', '430000396', '430000382', '430000380', '430000425',
+    '430000344', '430000149', '430000398', '430000011'
+}
+
+def determine_client_zone(client_id: Any = '', client_name: Any = '', current_zone: Any = '', cif: Any = '', series: Any = '') -> str:
+    s_clean = str(series or '').strip().upper()
+    if 'EX' in s_clean:
+        return 'Exportación'
+    c_clean = str(client_id or '').strip().replace('.0', '')
+    if c_clean in EXPORT_CLIENT_CODES:
+        return 'Exportación'
+    n_norm = str(client_name or '').upper()
+    if any(k in n_norm for k in EXPORT_CLIENT_KEYWORDS):
+        return 'Exportación'
+    cif_clean = str(cif or '').strip().upper()
+    if len(cif_clean) >= 2:
+        prefix = cif_clean[:2]
+        if prefix in ('MA', 'EG', 'AZ', 'TR', 'RO', 'NL', 'CL', 'CO', 'EC', 'GR', 'IT', 'RS', 'PA', 'LB', 'KW', 'SA', 'GE'):
+            return 'Exportación'
+        if prefix == 'ES':
+            return 'Nacional'
+    z_clean = str(current_zone or '').strip()
+    if 'export' in z_clean.lower() or 'extranj' in z_clean.lower():
+        return 'Exportación'
+    return 'Nacional'
+
 def money(val: float) -> str:
     formatted = f"{int(round(val)):,} EUR".replace(',', '.')
     return formatted 
@@ -831,7 +870,7 @@ def aggregate_docs(ds: DataSet, kind: str) -> pd.DataFrame:
     out['_name'] = out[name_col].fillna('').astype(str).str.strip() if name_col else ''
     out['_article'] = out[article_col].fillna('').astype(str).str.strip() if article_col else ''
     out['_series'] = out[series_col].fillna('').astype(str).str.strip() if series_col else ''
-    out['_geo'] = out['_series'].apply(lambda value: 'Exportación' if 'EX' in norm(value).upper() else 'Nacional')
+    out['_geo'] = out.apply(lambda r: determine_client_zone(r.get('_client'), r.get('_name'), series=r.get('_series', '')), axis=1)
     out['_units_ordered'] = out[ordered_col] if ordered_col else 0.0
     out['_units_served'] = out[served_col] if served_col else 0.0
     out['_units_pending'] = out[pending_col] if pending_col else 0.0
@@ -1720,6 +1759,7 @@ def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFram
                     art_data[art] = {
                         'codigo': art,
                         'descripcion': desc,
+                        'unidades': 0.0,
                         'facturado': 0.0,
                         'coste_var': 0.0,
                         'coste_fijo': 0.0,
@@ -1727,6 +1767,7 @@ def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFram
                         'margen_bruto': 0.0,
                         'margen_neto': 0.0
                     }
+                art_data[art]['unidades'] += uds
                 art_data[art]['facturado'] += imp
                 art_data[art]['coste_var'] += cost_var
                 art_data[art]['coste_fijo'] += cost_fijo
@@ -1744,9 +1785,10 @@ def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFram
         a['margen_neto_pct'] = (a['margen_neto'] / a['facturado'] * 100.0) if a['facturado'] > 0 else 0.0
         a['margen_pct'] = a['margen_neto_pct']
 
-    # Tops Artículos CLASIFICADOS EN FUNCIÓN DEL MARGEN NETO
-    top_mejores_articulos = sorted(art_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:10]
-    top_peores_articulos = sorted([a for a in art_data.values() if a['facturado'] >= 100], key=lambda x: x['margen_neto_pct'])[:10]
+    # Tops Artículos CLASIFICADOS EN FUNCIÓN DEL VOLUMEN DE VENTAS Y MARGEN NETO
+    top_mejores_articulos_volumen = sorted(art_data.values(), key=lambda x: x['facturado'], reverse=True)[:5]
+    top_mejores_articulos = sorted(art_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:5]
+    top_peores_articulos = sorted([a for a in art_data.values() if a['facturado'] >= 100], key=lambda x: x['margen_neto_pct'])[:5]
 
     # 2. Totales y Ratios Globales
     if has_custom_costes and total_imp_from_items > 0:
@@ -1862,9 +1904,10 @@ def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFram
         c['margen_neto_pct'] = (c['margen_neto'] / c['facturado'] * 100.0) if c['facturado'] > 0 else 0.0
         c['margen_pct'] = c['margen_neto_pct']
 
-    # Tops Clientes CLASIFICADOS EN FUNCIÓN DEL MARGEN NETO
-    top_mejores_clientes = sorted(cli_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:10]
-    top_peores_clientes = sorted([c for c in cli_data.values() if c['facturado'] >= 200], key=lambda x: x['margen_neto_pct'])[:10]
+    # Tops Clientes CLASIFICADOS EN FUNCIÓN DEL VOLUMEN DE VENTAS Y MARGEN NETO
+    top_mejores_clientes_volumen = sorted(cli_data.values(), key=lambda x: x['facturado'], reverse=True)[:5]
+    top_mejores_clientes = sorted(cli_data.values(), key=lambda x: x['margen_neto'], reverse=True)[:5]
+    top_peores_clientes = sorted([c for c in cli_data.values() if c['facturado'] >= 200], key=lambda x: x['margen_neto_pct'])[:5]
 
     return {
         'tiene_archivo_costes': has_custom_costes,
@@ -1880,8 +1923,10 @@ def calculate_profitability_metrics(facturas: pd.DataFrame, pedidos: pd.DataFram
         'margen_pct_medio': margen_neto_pct_ref,
         'familias': familias_margen,
         'top_mejores_clientes': top_mejores_clientes,
+        'top_mejores_clientes_volumen': top_mejores_clientes_volumen,
         'top_peores_clientes': top_peores_clientes,
         'top_mejores_articulos': top_mejores_articulos,
+        'top_mejores_articulos_volumen': top_mejores_articulos_volumen,
         'top_peores_articulos': top_peores_articulos
     }
 
@@ -2337,6 +2382,7 @@ def get_annual_accumulations(current_date_str: str, current_dfs: dict[str, pd.Da
                     client_map[c]['razon_social'] = row['razon_social']
     client_list = []
     for c, info in client_map.items():
+        info['zona'] = determine_client_zone(c, info.get('razon_social', ''), info.get('zona', ''))
         info['total_portfolio'] = info['facturado_ytd'] + info['albaranes_pending'] + info['pedidos_pending'] + info['ofertas_pending']
         client_list.append(info)
     client_list.sort(key=lambda x: x['total_portfolio'], reverse=True)
@@ -3934,50 +3980,70 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
         </tr>
         """
         
-    # Top Mejores Clientes (clasificados por Margen Neto €)
+    # Top 5 Clientes por Volumen de Ventas (Facturación)
+    vol_cli_rows = ""
+    for c in profit.get('top_mejores_clientes_volumen', []):
+        vol_cli_rows += f"""<tr>
+          <td style='max-width:220px; font-weight:600;'>{html.escape(c['cliente'])}</td>
+          <td class='text-right' data-sort='{c['facturado']:.2f}' data-order='{c['facturado']:.2f}'><strong>{money(c['facturado'])}</strong></td>
+          <td class='text-right' data-sort='{c.get('margen_bruto', 0):.2f}' data-order='{c.get('margen_bruto', 0):.2f}'>{money(c.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto', 0):.2f}' data-order='{c.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(c.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold; white-space:nowrap;'>{c.get('margen_neto_pct', 0):.1f}%</span></td>
+        </tr>"""
+
+    # Top 5 Mejores Clientes (clasificados por Margen Neto €)
     best_cli_rows = ""
     for c in profit.get('top_mejores_clientes', []):
         best_cli_rows += f"""<tr>
-          <td>{html.escape(c['cliente'])}</td>
+          <td style='max-width:220px; font-weight:600;'>{html.escape(c['cliente'])}</td>
           <td class='text-right' data-sort='{c['facturado']:.2f}' data-order='{c['facturado']:.2f}'>{money(c['facturado'])}</td>
           <td class='text-right' data-sort='{c.get('margen_bruto', 0):.2f}' data-order='{c.get('margen_bruto', 0):.2f}'>{money(c.get('margen_bruto', 0))}</td>
           <td class='text-right' data-sort='{c.get('margen_neto', 0):.2f}' data-order='{c.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(c.get('margen_neto', 0))}</td>
-          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}'><strong>{c.get('margen_neto_pct', 0):.1f}%</strong></td>
+          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold; white-space:nowrap;'>{c.get('margen_neto_pct', 0):.1f}%</span></td>
         </tr>"""
 
-    # Top Peores Clientes (clasificados por Menor Margen Neto %)
+    # Top 5 Peores Clientes (clasificados por Menor Margen Neto %)
     worst_cli_rows = ""
     for c in profit.get('top_peores_clientes', []):
         worst_cli_rows += f"""<tr>
-          <td>{html.escape(c['cliente'])}</td>
+          <td style='max-width:220px; font-weight:600;'>{html.escape(c['cliente'])}</td>
           <td class='text-right' data-sort='{c['facturado']:.2f}' data-order='{c['facturado']:.2f}'>{money(c['facturado'])}</td>
           <td class='text-right' data-sort='{c.get('margen_bruto', 0):.2f}' data-order='{c.get('margen_bruto', 0):.2f}'>{money(c.get('margen_bruto', 0))}</td>
           <td class='text-right' data-sort='{c.get('margen_neto', 0):.2f}' data-order='{c.get('margen_neto', 0):.2f}'>{money(c.get('margen_neto', 0))}</td>
-          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}' style='color:var(--danger); font-weight:bold;'>{c.get('margen_neto_pct', 0):.1f}%</td>
+          <td class='text-right' data-sort='{c.get('margen_neto_pct', 0):.2f}' data-order='{c.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(239,68,68,0.15); color:var(--danger); font-weight:bold; white-space:nowrap;'>{c.get('margen_neto_pct', 0):.1f}%</span></td>
         </tr>"""
 
-    # Top Mejores Artículos (clasificados por Margen Neto €)
+    # Top 5 Artículos por Volumen de Ventas (Facturación) - SKU y Descripción integrados
+    vol_art_rows = ""
+    for a in profit.get('top_mejores_articulos_volumen', []):
+        vol_art_rows += f"""<tr>
+          <td><strong style='color:var(--ink);'>{html.escape(a['descripcion'])}</strong><br><code style='font-size:10.5px; opacity:0.75;'>{html.escape(a['codigo'])}</code></td>
+          <td class='text-right' data-sort='{a['facturado']:.2f}' data-order='{a['facturado']:.2f}'><strong>{money(a['facturado'])}</strong></td>
+          <td class='text-right' data-sort='{a.get('margen_bruto', 0):.2f}' data-order='{a.get('margen_bruto', 0):.2f}'>{money(a.get('margen_bruto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto', 0):.2f}' data-order='{a.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(a.get('margen_neto', 0))}</td>
+          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold; white-space:nowrap;'>{a.get('margen_neto_pct', 0):.1f}%</span></td>
+        </tr>"""
+
+    # Top 5 Mejores Artículos (clasificados por Margen Neto €)
     best_art_rows = ""
     for a in profit.get('top_mejores_articulos', []):
         best_art_rows += f"""<tr>
-          <td><code>{html.escape(a['codigo'])}</code></td>
-          <td>{html.escape(a['descripcion'])}</td>
+          <td><strong style='color:var(--ink);'>{html.escape(a['descripcion'])}</strong><br><code style='font-size:10.5px; opacity:0.75;'>{html.escape(a['codigo'])}</code></td>
           <td class='text-right' data-sort='{a['facturado']:.2f}' data-order='{a['facturado']:.2f}'>{money(a['facturado'])}</td>
           <td class='text-right' data-sort='{a.get('margen_bruto', 0):.2f}' data-order='{a.get('margen_bruto', 0):.2f}'>{money(a.get('margen_bruto', 0))}</td>
           <td class='text-right' data-sort='{a.get('margen_neto', 0):.2f}' data-order='{a.get('margen_neto', 0):.2f}' style='color:var(--success); font-weight:bold;'>{money(a.get('margen_neto', 0))}</td>
-          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}'><strong>{a.get('margen_neto_pct', 0):.1f}%</strong></td>
+          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(16,185,129,0.15); color:var(--success); font-weight:bold; white-space:nowrap;'>{a.get('margen_neto_pct', 0):.1f}%</span></td>
         </tr>"""
 
-    # Top Peores Artículos (clasificados por Menor Margen Neto %)
+    # Top 5 Peores Artículos (clasificados por Menor Margen Neto %)
     worst_art_rows = ""
     for a in profit.get('top_peores_articulos', []):
         worst_art_rows += f"""<tr>
-          <td><code>{html.escape(a['codigo'])}</code></td>
-          <td>{html.escape(a['descripcion'])}</td>
+          <td><strong style='color:var(--ink);'>{html.escape(a['descripcion'])}</strong><br><code style='font-size:10.5px; opacity:0.75;'>{html.escape(a['codigo'])}</code></td>
           <td class='text-right' data-sort='{a['facturado']:.2f}' data-order='{a['facturado']:.2f}'>{money(a['facturado'])}</td>
           <td class='text-right' data-sort='{a.get('margen_bruto', 0):.2f}' data-order='{a.get('margen_bruto', 0):.2f}'>{money(a.get('margen_bruto', 0))}</td>
           <td class='text-right' data-sort='{a.get('margen_neto', 0):.2f}' data-order='{a.get('margen_neto', 0):.2f}'>{money(a.get('margen_neto', 0))}</td>
-          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}' style='color:var(--danger); font-weight:bold;'>{a.get('margen_neto_pct', 0):.1f}%</td>
+          <td class='text-right' data-sort='{a.get('margen_neto_pct', 0):.2f}' data-order='{a.get('margen_neto_pct', 0):.2f}'><span class='badge' style='background:rgba(239,68,68,0.15); color:var(--danger); font-weight:bold; white-space:nowrap;'>{a.get('margen_neto_pct', 0):.1f}%</span></td>
         </tr>"""
 
     custom_msg = "✓ Archivo de costes cargado (desglose de costes variables, costes fijos y margen neto aplicado)." if profit.get('tiene_archivo_costes') else "ℹ️ Mostrando ratios estándar. Sube tu archivo de costes en la pestaña Importación para el cálculo exacto por escandallo."
@@ -4028,7 +4094,7 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
         </div>
         
         <h3 style="font-size: 13.5px; margin-bottom: 10px; color: var(--ink);">Rentabilidad por Familias de Producto (Margen Bruto vs Margen Neto)</h3>
-        <table class="datatable" style="margin-bottom: 24px;">
+        <table style="margin-bottom: 24px;">
           <thead>
             <tr>
               <th>Familia Tecnológica</th>
@@ -4044,40 +4110,78 @@ def render_profitability_tab(profit: dict[str, Any], current: pd.Timestamp) -> s
           </tbody>
         </table>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; margin-bottom: 24px;">
-          <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Clientes (Mayor Margen Neto €)</h3>
-            <table class="datatable">
-              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
-              <tbody>{best_cli_rows}</tbody>
+        <!-- SECCIÓN 1: CLIENTES DESTACADOS (VOLUMEN VS MARGEN) -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 20px; margin-bottom: 24px;">
+          <div style="background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #38bdf8; font-weight: 700;">📊 Top 5 Clientes por Volumen de Ventas</h3>
+              <span style="font-size: 11px; color: var(--muted); background: rgba(56,189,248,0.1); padding: 2px 8px; border-radius: 4px;">Mayor Facturación</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
+              <tbody>{vol_cli_rows}</tbody>
             </table>
           </div>
-          <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Clientes con Menor Margen Neto (%)</h3>
-            <table class="datatable">
-              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
-              <tbody>{worst_cli_rows}</tbody>
+          <div style="background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #10b981; font-weight: 700;">🏆 Top 5 Mejores Clientes (Mayor Margen Neto €)</h3>
+              <span style="font-size: 11px; color: var(--muted); background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 4px;">Mayor Margen</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
+              <tbody>{best_cli_rows}</tbody>
             </table>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px;">
-          <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #10b981;">🏆 Top 10 Mejores Artículos (Mayor Margen Neto €)</h3>
-            <table class="datatable">
-              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
+        <!-- SECCIÓN 2: ARTÍCULOS DESTACADOS (VOLUMEN VS MARGEN) -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 20px; margin-bottom: 24px;">
+          <div style="background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #38bdf8; font-weight: 700;">📊 Top 5 Artículos por Volumen de Ventas</h3>
+              <span style="font-size: 11px; color: var(--muted); background: rgba(56,189,248,0.1); padding: 2px 8px; border-radius: 4px;">Mayor Facturación</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Artículo / SKU</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
+              <tbody>{vol_art_rows}</tbody>
+            </table>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #10b981; font-weight: 700;">🏆 Top 5 Mejores Artículos (Mayor Margen Neto €)</h3>
+              <span style="font-size: 11px; color: var(--muted); background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 4px;">Mayor Margen</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Artículo / SKU</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
               <tbody>{best_art_rows}</tbody>
             </table>
           </div>
-          <div>
-            <h3 style="font-size: 13.5px; margin-bottom: 10px; color: #ef4444;">⚠️ Top 10 Artículos con Menor Margen Neto (%)</h3>
-            <table class="datatable">
-              <thead><tr><th>Código</th><th>Descripción</th><th class='text-right'>Facturado</th><th class='text-right'>Margen Bruto (€)</th><th class='text-right'>Margen Neto (€)</th><th class='text-right'>Margen Neto (%)</th></tr></thead>
+        </div>
+
+        <!-- SECCIÓN 3: ALERTAS DE MENOR MARGEN NETO (%) -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 20px;">
+          <div style="background: var(--bg-card); border: 1px solid rgba(239,68,68,0.25); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #ef4444; font-weight: 700;">⚠️ Top 5 Clientes con Menor Margen Neto (%)</h3>
+              <span style="font-size: 11px; color: #ef4444; background: rgba(239,68,68,0.1); padding: 2px 8px; border-radius: 4px;">Atención Comercial</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Cliente</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
+              <tbody>{worst_cli_rows}</tbody>
+            </table>
+          </div>
+          <div style="background: var(--bg-card); border: 1px solid rgba(239,68,68,0.25); border-radius: 10px; padding: 18px; overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <h3 style="font-size: 13.5px; margin: 0; color: #ef4444; font-weight: 700;">⚠️ Top 5 Artículos con Menor Margen Neto (%)</h3>
+              <span style="font-size: 11px; color: #ef4444; background: rgba(239,68,68,0.1); padding: 2px 8px; border-radius: 4px;">Revisión de Costes</span>
+            </div>
+            <table class="datatable" data-per-page="5" style="width: 100%;">
+              <thead><tr><th>Artículo / SKU</th><th class='text-right'>Facturado</th><th class='text-right'>M. Bruto</th><th class='text-right'>M. Neto (€)</th><th class='text-right'>M. Neto (%)</th></tr></thead>
               <tbody>{worst_art_rows}</tbody>
             </table>
           </div>
         </div>
-      </section>
+        </section>
     </div>
     """
 
@@ -4447,7 +4551,9 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
             
             cr = ""
             for c in top_clients_list:
-                cr += f'<tr><td>{html.escape(str(c.get("cliente","")))}</td><td>{html.escape(str(c.get("razon_social","")))}</td><td>{html.escape(str(c.get("zona","-")))}</td><td class="text-right" data-order="{c.get("facturado_ytd",0)}">{money(c.get("facturado_ytd",0))}</td><td class="text-right" data-order="{c.get("albaranes_pending",0)}">{money(c.get("albaranes_pending",0))}</td><td class="text-right" data-order="{c.get("pedidos_pending",0)}">{money(c.get("pedidos_pending",0))}</td><td class="text-right" data-order="{c.get("ofertas_pending",0)}">{money(c.get("ofertas_pending",0))}</td><td class="text-right" data-order="{c.get("total_portfolio",0)}"><strong>{money(c.get("total_portfolio",0))}</strong></td></tr>'
+                z_val = determine_client_zone(c.get("cliente"), c.get("razon_social"), c.get("zona", ""))
+                z_badge = f'<span class="badge" style="background:rgba(56,189,248,0.15); color:#38bdf8; font-weight:bold; border: 1px solid rgba(56,189,248,0.3);">Exportación</span>' if 'Export' in z_val else f'<span class="badge" style="background:rgba(16,185,129,0.15); color:#10b981; font-weight:bold; border: 1px solid rgba(16,185,129,0.3);">Nacional</span>'
+                cr += f'<tr><td>{html.escape(str(c.get("cliente","")))}</td><td><strong>{html.escape(str(c.get("razon_social","")))}</strong></td><td>{z_badge}</td><td class="text-right" data-order="{c.get("facturado_ytd",0)}">{money(c.get("facturado_ytd",0))}</td><td class="text-right" data-order="{c.get("albaranes_pending",0)}">{money(c.get("albaranes_pending",0))}</td><td class="text-right" data-order="{c.get("pedidos_pending",0)}">{money(c.get("pedidos_pending",0))}</td><td class="text-right" data-order="{c.get("ofertas_pending",0)}">{money(c.get("ofertas_pending",0))}</td><td class="text-right" data-order="{c.get("total_portfolio",0)}"><strong>{money(c.get("total_portfolio",0))}</strong></td></tr>'
             client_table = pie_chart_html + f'<table class="datatable"><thead><tr><th>Cliente</th><th>Razón Social</th><th>Zona</th><th>Fact. YTD</th><th>Alb. Pend.</th><th>Ped. Pend.</th><th>Ofe. Abiertas</th><th>Total</th></tr></thead><tbody>{cr}</tbody></table>'
         else:
             client_table = "<p class='note'>No hay datos de clientes.</p>"
@@ -4843,7 +4949,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     val = f"{item['valor']:,.2f} €".replace(',', 'X').replace('.', ',').replace('X', '.')
                     obs_rows.append(f"<tr><td>{name}</td><td class='text-right' style='color:#ef4444;'>{val}</td></tr>")
                 obs_rows_str = "".join(obs_rows)
-                obs_table = f"<div style='margin-top:12px; font-size:12px;'><table style='margin-bottom:0;'><thead><tr><th>Top 5 Obsoletos</th><th class='text-right'>Valoración</th></tr></thead><tbody>{obs_rows_str}</tbody></table></div>" if obs_rows_str else ""
+                obs_table = f"<div style='margin-top:12px; font-size:12px;'><table style='margin-bottom:0;'><thead><tr><th>Top 5 Sin Ventas</th><th class='text-right'>Valoración</th></tr></thead><tbody>{obs_rows_str}</tbody></table></div>" if obs_rows_str else ""
                 
                 stock_insights_html = f"""
                 <div style="display: grid; grid-template-columns: 2.2fr 1fr; gap: 16px; margin-bottom: 24px;">
@@ -4854,7 +4960,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                         {cap_table}
                     </div>
                     <div class="panel kpi-card" style="margin-bottom: 0;">
-                        <h3>Stock Obsoleto (Sin ventas YTD)</h3>
+                        <h3>Stock sin ventas en este año</h3>
                         <div class="kpi-value" style="color: #ef4444;">{obs_cap_str}</div>
                         <div class="kpi-trend">Supone un {obs_pct_str} del capital total</div>
                         {obs_table}
