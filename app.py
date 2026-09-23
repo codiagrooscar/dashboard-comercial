@@ -3306,14 +3306,12 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
         import random
         chart_id = f"trendChart_{random.randint(1000, 9999)}"
         return f"""
-        <div style="width:100%; height:300px; position:relative; margin-bottom: 24px;">
+        <div style="width:100%; height:320px; position:relative; margin-bottom: 24px;">
             <canvas id="{chart_id}"></canvas>
         </div>
         <script>
-        document.addEventListener('DOMContentLoaded', function() {{
-            if (typeof Chart === 'undefined') return;
-            const ctx = document.getElementById('{chart_id}').getContext('2d');
-            new Chart(ctx, {{
+        createResponsiveChart('{chart_id}', function() {{
+            return {{
                 type: 'line',
                 data: {{
                     labels: {json.dumps(labels)},
@@ -3322,19 +3320,25 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
                             label: 'Pedidos',
                             data: {json.dumps(pedidos_data)},
                             borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                            borderWidth: 2,
+                            backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                            borderWidth: 2.5,
                             fill: true,
-                            tension: 0.3
+                            tension: 0.35,
+                            pointBackgroundColor: '#3b82f6',
+                            pointRadius: 4,
+                            pointHoverRadius: 7
                         }},
                         {{
                             label: 'Facturación',
                             data: {json.dumps(facturas_data)},
                             borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                            borderWidth: 2,
+                            backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                            borderWidth: 2.5,
                             fill: true,
-                            tension: 0.3
+                            tension: 0.35,
+                            pointBackgroundColor: '#10b981',
+                            pointRadius: 4,
+                            pointHoverRadius: 7
                         }}
                     ]
                 }},
@@ -3344,11 +3348,11 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
                     interaction: {{ mode: 'index', intersect: false }},
                     color: '#94a3b8',
                     scales: {{
-                        x: {{ grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }},
-                        y: {{ beginAtZero: true, grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8' }} }}
+                        x: {{ grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8', font: {{ size: 11 }} }} }},
+                        y: {{ beginAtZero: true, grid: {{ color: 'rgba(255,255,255,0.05)' }}, ticks: {{ color: '#94a3b8', font: {{ size: 11 }} }} }}
                     }},
                     plugins: {{
-                        legend: {{ labels: {{ color: '#f1f5f9' }} }},
+                        legend: {{ position: 'top', labels: {{ color: '#f1f5f9', font: {{ weight: 'bold', size: 12 }} }} }},
                         tooltip: {{
                             callbacks: {{
                                 label: function(context) {{
@@ -3363,7 +3367,7 @@ def render_trend_chart(trend: dict[str, list[dict[str, Any]]]) -> str:
                         }}
                     }}
                 }}
-            }});
+            }};
         }});
         </script>
         """
@@ -4783,10 +4787,8 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                 {custom_legend_html}
             </div>
             <script>
-            document.addEventListener('DOMContentLoaded', function() {{
-                if (typeof Chart === 'undefined') return;
-                const ctx = document.getElementById('{pie_id}').getContext('2d');
-                new Chart(ctx, {{
+            createResponsiveChart('{pie_id}', function() {{
+                return {{
                     type: 'doughnut',
                     data: {{
                         labels: {json.dumps(pie_labels)},
@@ -4862,7 +4864,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                             }});
                         }}
                     }}]
-                }});
+                }};
             }});
             </script>
             """
@@ -5099,10 +5101,8 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     <canvas id="{top_id}"></canvas>
                 </div>
                 <script>
-                document.addEventListener('DOMContentLoaded', function() {{
-                    if (typeof Chart === 'undefined') return;
-                    const ctx = document.getElementById('{top_id}').getContext('2d');
-                    new Chart(ctx, {{
+                createResponsiveChart('{top_id}', function() {{
+                    return {{
                         type: 'bar',
                         data: {{
                             labels: {json.dumps(top_labels)},
@@ -5132,7 +5132,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                                 y: {{ grid: {{ display: false }}, ticks: {{ color: '#94a3b8' }} }}
                             }}
                         }}
-                    }});
+                    }};
                 }});
                 </script>
                 """
@@ -5172,10 +5172,8 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     <canvas id="{monthly_id}"></canvas>
                 </div>
                 <script>
-                document.addEventListener('DOMContentLoaded', function() {{
-                    if (typeof Chart === 'undefined') return;
-                    const ctx = document.getElementById('{monthly_id}').getContext('2d');
-                    new Chart(ctx, {{
+                createResponsiveChart('{monthly_id}', function() {{
+                    return {{
                         type: 'bar',
                         data: {{
                             labels: {json.dumps(monthly_labels)},
@@ -5252,7 +5250,7 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                                 y: {{ stacked: true, grid: {{ display: false }}, ticks: {{ color: '#94a3b8' }} }}
                             }}
                         }}
-                    }});
+                    }};
                 }});
                 </script>
                 """
@@ -5964,6 +5962,24 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_error(404, 'Manual HTML not found')
             except Exception as e:
                 self.send_error(500, f'Error serving manual HTML: {str(e)}')
+        elif path in ['/chart.umd.min.js', '/simple-datatables.js', '/simple-datatables.css']:
+            try:
+                fname = path.lstrip('/')
+                fpath = BASE_DIR / fname
+                if fpath.exists():
+                    fdata = fpath.read_bytes()
+                    ctype = 'text/css; charset=utf-8' if fname.endswith('.css') else 'application/javascript; charset=utf-8'
+                    self.send_response(200)
+                    self.send_header('Content-Type', ctype)
+                    self.send_header('Content-Length', str(len(fdata)))
+                    self.send_header('Cache-Control', 'public, max-age=31536000')
+                    self.end_headers()
+                    self.wfile.write(fdata)
+                else:
+                    self.send_error(404, f'{fname} not found')
+            except Exception as e:
+                self.send_error(500, f'Error serving static file: {str(e)}')
+            return
         elif path == '/html2pdf.bundle.min.js':
             try:
                 js_path = BASE_DIR / 'html2pdf.bundle.min.js'
