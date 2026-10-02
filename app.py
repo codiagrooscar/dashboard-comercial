@@ -549,12 +549,12 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         if kind == 'pedidos':
             date_col = ds.require_date('FechaPedido', 'Fecha pedido')
             amount_col = ds.amount_col('ImporteBruto', 'ImporteNeto', 'Importe')
-            pending_amount_col = ds.amount_col('ImporteBrutoPendiente', 'Importe pendiente')
-            number_cols = [ds.col('EjercicioPedido'), ds.col('SeriePedido'), ds.col('NumeroPedido')]
+            pending_amount_col = ds.amount_col('ImporteBrutoPendiente', 'ImporteNetoPendiente', 'Importe pendiente', 'Importe neto pendiente')
+            number_cols = [ds.col('EjercicioPedido', 'Ejercicio'), ds.col('SeriePedido', 'Serie'), ds.col('NumeroPedido', 'Pedido')]
             needed_date_col = ds.require_date('FechaNecesaria', 'Fecha necesaria')
-            ordered_col = ds.amount_col('UnidadesPedidas')
-            served_col = ds.amount_col('UnidadesServidas')
-            pending_col = ds.amount_col('UnidadesPendientes')
+            ordered_col = ds.amount_col('UnidadesPedidas', 'Pedidas')
+            served_col = ds.amount_col('UnidadesServidas', 'Servidas')
+            pending_col = ds.amount_col('UnidadesPendientes', 'Pendientes')
         else:
             if kind == 'albaranes':
                 date_col = ds.require_date('FechaAlbaran', 'Fecha albaran')
@@ -620,9 +620,15 @@ def parse_excel_to_normalized_df(source: bytes | str, kind: str) -> pd.DataFrame
         ordered_col = served_col = pending_col = None
     client_col = ds.col('CodigoCliente', 'Cod. cliente', 'Cód. cliente')
     name_col = ds.col('RazonSocial', 'Razon social', 'Razón social', 'Nombre')
-    article_col = ds.col('CodigoArticulo', 'Codigo articulo', 'Artículo')
+    if not name_col and ds.col('Cliente') and ds.col('Cliente') != client_col:
+        name_col = ds.col('Cliente')
+    article_col = ds.col('CodigoArticulo', 'Codigo articulo', 'Cod. articulo', 'Cód. artículo')
+    if not article_col:
+        article_col = ds.col('Artículo', 'Articulo')
     description_col = ds.col('DescripcionArticulo', 'Descripcion articulo', 'Descripción artículo', 'Descripcion', 'Descripción')
-    series_col = ds.col('SeriePedido', 'Serie pedido', 'SerieOferta', 'Serie factura', 'SerieAlbaran')
+    if not description_col and ds.col('Artículo', 'Articulo') and ds.col('Artículo', 'Articulo') != article_col:
+        description_col = ds.col('Artículo', 'Articulo')
+    series_col = ds.col('SeriePedido', 'Serie pedido', 'SerieOferta', 'Serie factura', 'SerieAlbaran', 'Serie')
     cif_col = ds.col('CIF europeo', 'CIF Europeo', 'CIF') if kind == 'facturas' else None
     out = pd.DataFrame(index=df.index)
     out['documento'] = doc_key(df, number_cols, kind)
@@ -2734,7 +2740,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         7: 1636909.0,
         8: 776076.0,
         9: 1026568.49,
-        10: 1800000.0,
+        10: 798567.18,
         11: 1800000.0,
         12: 1500000.0,
     }
