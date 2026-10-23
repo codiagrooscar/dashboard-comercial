@@ -2377,8 +2377,8 @@
         // Leer simuladores (si existen)
         const simBacklogInput = document.getElementById('sim-backlog');
         const simOfertasInput = document.getElementById('sim-ofertas');
-        const pctBacklog = simBacklogInput ? (parseFloat(simBacklogInput.value) / 100) : 1;
-        const pctOfertas = simOfertasInput ? (parseFloat(simOfertasInput.value) / 100) : 1;
+        const pctBacklog = simBacklogInput ? (parseFloat(simBacklogInput.value) / 100) : 0;
+        const pctOfertas = simOfertasInput ? (parseFloat(simOfertasInput.value) / 100) : 0;
         
         // El Backlog Antiguo se ve afectado por pctBacklog
         const antiguosSimulados = antiguos * pctBacklog;
@@ -2594,12 +2594,12 @@
         // 8. Actualizar KPIs nuevos
         const kpiEstimacionCierre = document.getElementById('kpi-estimacion-cierre-value');
         if (kpiEstimacionCierre) {
-          kpiEstimacionCierre.textContent = formatMoney(facturado + albaranes + checkedAmount);
+          kpiEstimacionCierre.textContent = formatMoney(totalForecast);
         }
 
         const kpiBrechaGap = document.getElementById('kpi-brecha-gap-value');
         if (kpiBrechaGap) {
-          const currentGap = Math.max(0, budget - (facturado + albaranes + checkedAmount));
+          const currentGap = Math.max(0, budget - totalForecast);
           kpiBrechaGap.textContent = formatMoney(currentGap);
           if (currentGap <= 0) {
             kpiBrechaGap.style.color = 'var(--success)';

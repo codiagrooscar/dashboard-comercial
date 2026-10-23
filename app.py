@@ -2757,7 +2757,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     month_invoiced = float(month['facturas']['importe'].sum())
     pending_delivery_amount = float(pending_albaranes['importe'].sum()) if not pending_albaranes.empty else 0.0
     loadable_amount = float(loadable_orders[~loadable_orders['siguiente_mes']]['importe_pendiente'].sum()) if not loadable_orders.empty else 0.0
-    forecast_total = month_invoiced + pending_delivery_amount + loadable_amount + older_amount
+    forecast_total = month_invoiced + pending_delivery_amount + loadable_amount
     budget_gap_current = month_invoiced - month_budget
     budget_gap_expected = forecast_total - month_budget
     
@@ -2783,8 +2783,8 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
     loadable_orders_split = calc_split(loadable_orders[~loadable_orders['siguiente_mes']] if not loadable_orders.empty else pd.DataFrame(), 'importe_pendiente')
     older_orders_split = calc_split(older_orders, 'importe_pendiente')
     estimacion_total_split = {
-        'nacional': month_facturado_split['nacional'] + pending_albaranes_split['nacional'] + loadable_orders_split['nacional'] + older_orders_split['nacional'],
-        'exportacion': month_facturado_split['exportacion'] + pending_albaranes_split['exportacion'] + loadable_orders_split['exportacion'] + older_orders_split['exportacion']
+        'nacional': month_facturado_split['nacional'] + pending_albaranes_split['nacional'] + loadable_orders_split['nacional'],
+        'exportacion': month_facturado_split['exportacion'] + pending_albaranes_split['exportacion'] + loadable_orders_split['exportacion']
     }
     month_pedidos_split = calc_split(month['pedidos'], 'importe_pendiente')
     ofertas_aprobadas_split = calc_split(approved_offers, 'importe')
@@ -5420,9 +5420,9 @@ def render_report(report: dict[str, Any] | None=None, error: str | None=None, se
                     <div style="flex: 1; min-width: 200px;">
                         <label for="sim-backlog" style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:8px;">
                             <span>% Éxito Backlog Antiguo</span>
-                            <span style="font-weight:bold;"><span id="sim-backlog-val">100</span>%</span>
+                            <span style="font-weight:bold;"><span id="sim-backlog-val">0</span>%</span>
                         </label>
-                        <input type="range" id="sim-backlog" min="0" max="100" value="100" oninput="document.getElementById('sim-backlog-val').innerText = this.value; updateForecast();" style="width:100%;">
+                        <input type="range" id="sim-backlog" min="0" max="100" value="0" oninput="document.getElementById('sim-backlog-val').innerText = this.value; updateForecast();" style="width:100%;">
                     </div>
                     <div style="flex: 1; min-width: 200px;">
                         <label for="sim-ofertas" style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:8px;">
