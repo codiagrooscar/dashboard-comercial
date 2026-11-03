@@ -2741,7 +2741,7 @@ def build_report_from_data(dfs: dict[str, pd.DataFrame], current: pd.Timestamp) 
         8: 776076.0,
         9: 1026568.49,
         10: 798567.18,
-        11: 1800000.0,
+        11: 1030243.0,
         12: 1500000.0,
     }
     month_budget = None
